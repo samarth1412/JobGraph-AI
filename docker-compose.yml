@@ -1,4 +1,15 @@
-﻿services:
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jobgraph
+      POSTGRES_USER: jobgraph
+      POSTGRES_PASSWORD: jobgraph
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   api:
     build:
       context: .
@@ -7,6 +18,11 @@
       - "8020:8020"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg://jobgraph:jobgraph@db:5432/jobgraph
+    depends_on:
+      - db
+
   web:
     image: node:22-alpine
     working_dir: /app/apps/web
@@ -19,3 +35,6 @@
       - "3020:3020"
     depends_on:
       - api
+
+volumes:
+  pgdata:

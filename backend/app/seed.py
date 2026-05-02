@@ -7,7 +7,7 @@ from backend.app.services import store
 
 
 def seed() -> None:
-    if store.JOBS:
+    if store.list_jobs():
         return
     profile = CandidateProfile(candidate_id="default", name="Manav", email="manav@example.com", target_roles=["Machine Learning Engineer", "AI Engineer", "Recommendation Systems Engineer"], location_preferences=["Remote", "California", "New York"], skills=["Python", "PyTorch", "FastAPI", "Docker", "LangGraph", "RAG", "ML Evaluation", "Graph Neural Networks", "Recommendation Systems"], links={"github": "https://github.com/example", "linkedin": "https://linkedin.com/in/example"})
     store.save_candidate(profile)

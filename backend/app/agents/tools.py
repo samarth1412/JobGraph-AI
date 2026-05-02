@@ -7,13 +7,13 @@ from backend.app.services import store
 
 def find_best_jobs(candidate_id: str = "default", k: int = 10) -> dict:
     candidate = store.get_candidate(candidate_id)
-    matches = rank_jobs(candidate, list(store.JOBS.values()), k=k)
+    matches = rank_jobs(candidate, store.list_jobs(), k=k)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
 
 def explain_match(candidate_id: str, job_id: str) -> dict:
     candidate = store.get_candidate(candidate_id)
-    job = store.JOBS[job_id]
+    job = store.get_job(job_id)
     return rank_jobs(candidate, [job], k=1)[0].model_dump()
 
 
@@ -33,10 +33,10 @@ def generate_cover_letter(candidate_id: str, job_id: str) -> dict:
 
 
 def prepare_autofill_profile(candidate_id: str = "default") -> dict:
-    return store.AUTOFILL_PROFILES[candidate_id].model_dump()
+    return store.get_autofill(candidate_id).model_dump()
 
 
 def track_application(candidate_id: str, job_id: str, status: str, note: str = "") -> dict:
     event = ApplicationEvent(candidate_id=candidate_id, job_id=job_id, status=status, note=note)
-    store.APPLICATIONS.append(event)
+    store.save_application(event)
     return {"stored": True, "event": event.model_dump()}

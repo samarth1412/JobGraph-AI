@@ -16,6 +16,7 @@ JobGraph AI ingests real-time jobs, parses a candidate resume, builds a candidat
 - Agentic copilot tools for search, compare, resume tailoring, cover letters, outreach, and tracker updates.
 - Human-in-the-loop Chrome extension autofill profile.
 - MLOps endpoints for ingestion, ranking, latency, and feedback metrics.
+- Persistent storage for jobs, candidates, applications, and autofill profiles using SQLAlchemy.
 
 ## Quick Start
 
@@ -46,6 +47,13 @@ USAJOBS_USER_AGENT=your_email@example.com
 USAJOBS_API_KEY=
 JSEARCH_API_KEY=
 OPENAI_API_KEY=
+DATABASE_URL=sqlite:///./jobgraph.db
 ```
 
 The app runs without keys using local demo data, but real-time ingestion requires API credentials.
+
+For PostgreSQL, set:
+
+```text
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/jobgraph
+```

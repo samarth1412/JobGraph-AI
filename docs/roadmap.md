@@ -8,7 +8,8 @@
 - Chrome extension human-reviewed autofill.
 
 ## Phase 2
-- PostgreSQL persistence and pgvector.
+- SQLAlchemy persistence with SQLite locally and PostgreSQL through Docker Compose.
+- pgvector embeddings for semantic job/resume retrieval.
 - PyTorch Geometric heterogeneous GNN link prediction.
 - LangGraph planner around the existing tool layer.
 - MLflow experiment tracking.

@@ -1,36 +1,57 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from typing import Dict, List
+from typing import List
+
+from backend.app.db import repository
+from backend.app.db.session import session_scope
 from backend.app.schemas import ApplicationEvent, AutofillProfile, CandidateProfile, Job
-
-JOBS: Dict[str, Job] = {}
-CANDIDATES: Dict[str, CandidateProfile] = {}
-APPLICATIONS: List[ApplicationEvent] = []
-AUTOFILL_PROFILES: Dict[str, AutofillProfile] = {}
 
 
 def upsert_jobs(jobs: List[Job]) -> List[Job]:
-    for job in jobs:
-        JOBS[job.job_id] = job
-    return jobs
+    with session_scope() as session:
+        return repository.save_jobs(session, jobs)
+
+
+def list_jobs() -> List[Job]:
+    with session_scope() as session:
+        return repository.list_jobs(session)
+
+
+def get_job(job_id: str) -> Job:
+    with session_scope() as session:
+        return repository.get_job(session, job_id)
 
 
 def save_candidate(profile: CandidateProfile) -> CandidateProfile:
-    CANDIDATES[profile.candidate_id] = profile
-    if profile.candidate_id not in AUTOFILL_PROFILES:
-        AUTOFILL_PROFILES[profile.candidate_id] = AutofillProfile(
-            candidate_id=profile.candidate_id,
-            legal_name=profile.name,
-            email=profile.email,
-            phone=profile.phone,
-            linkedin=profile.links.get("linkedin", ""),
-            github=profile.links.get("github", ""),
-            portfolio=profile.links.get("portfolio", ""),
-        )
-    return profile
+    with session_scope() as session:
+        return repository.save_candidate(session, profile)
 
 
 def get_candidate(candidate_id: str = "default") -> CandidateProfile:
-    if candidate_id not in CANDIDATES:
-        CANDIDATES[candidate_id] = CandidateProfile(candidate_id=candidate_id)
-    return CANDIDATES[candidate_id]
+    with session_scope() as session:
+        return repository.get_candidate(session, candidate_id)
+
+
+def save_application(event: ApplicationEvent) -> ApplicationEvent:
+    with session_scope() as session:
+        return repository.save_application(session, event)
+
+
+def list_applications(candidate_id: str) -> List[ApplicationEvent]:
+    with session_scope() as session:
+        return repository.list_applications(session, candidate_id)
+
+
+def save_autofill(profile: AutofillProfile) -> AutofillProfile:
+    with session_scope() as session:
+        return repository.save_autofill(session, profile)
+
+
+def get_autofill(candidate_id: str) -> AutofillProfile:
+    with session_scope() as session:
+        return repository.get_autofill(session, candidate_id)
+
+
+def metrics_counts() -> dict:
+    with session_scope() as session:
+        return repository.counts(session)
