@@ -27,7 +27,7 @@ cd "C:/Users/mannv/OneDrive/Desktop/Projects/job-graph ai"
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r backend/requirements.txt
-uvicorn backend.app.main:app --reload --port 8020
+uvicorn backend.app.main:app --reload --port 8022
 ```
 
 Optional web app:

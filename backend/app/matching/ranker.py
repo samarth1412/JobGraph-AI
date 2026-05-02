@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+from backend.app.matching.graphsage import graphsage_affinity_scores
 from backend.app.matching.semantic import semantic_scores
 from backend.app.schemas import CandidateProfile, Job, MatchResult
 
@@ -9,6 +10,7 @@ from backend.app.schemas import CandidateProfile, Job, MatchResult
 def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List[MatchResult]:
     candidate_skills = {skill.lower(): skill for skill in candidate.skills}
     semantic = semantic_scores(candidate, jobs)
+    graph_affinity, _diagnostics = graphsage_affinity_scores(candidate, jobs)
     results: List[MatchResult] = []
 
     for index, job in enumerate(jobs):
@@ -19,7 +21,8 @@ def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List
         location_bonus = 0.10 if any(loc.lower() in job.location.lower() for loc in candidate.location_preferences) else 0.0
         skill_score = len(matched_keys) / max(len(required), 1)
         semantic_score = semantic[index] if index < len(semantic) else 0.0
-        score = min(1.0, 0.58 * skill_score + 0.22 * semantic_score + role_bonus + location_bonus)
+        graph_score = graph_affinity[index] if index < len(graph_affinity) else 0.0
+        score = min(1.0, 0.42 * skill_score + 0.16 * semantic_score + 0.27 * graph_score + role_bonus + location_bonus)
         matched = [required[key] for key in matched_keys]
         missing = [required[key] for key in missing_keys]
         results.append(
@@ -28,14 +31,15 @@ def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List
                 score=round(score * 100, 1),
                 matched_skills=matched,
                 missing_skills=missing,
-                explanation=explain(job, matched, missing, score, semantic_score),
+                explanation=explain(job, matched, missing, score, semantic_score, graph_score),
+                model_source="hybrid_skill_semantic_graphsage_ranker_v3",
             )
         )
 
     return sorted(results, key=lambda item: item.score, reverse=True)[:k]
 
 
-def explain(job: Job, matched: List[str], missing: List[str], score: float, semantic_score: float = 0.0) -> str:
+def explain(job: Job, matched: List[str], missing: List[str], score: float, semantic_score: float = 0.0, graph_score: float = 0.0) -> str:
     parts = []
     if matched:
         parts.append(f"Matches {len(matched)} core skills: {', '.join(matched[:6])}.")
@@ -43,9 +47,11 @@ def explain(job: Job, matched: List[str], missing: List[str], score: float, sema
         parts.append(f"Missing or weak signals: {', '.join(missing[:6])}.")
     if semantic_score > 0:
         parts.append(f"Semantic resume/job similarity is {round(semantic_score * 100)}%.")
+    if graph_score > 0:
+        parts.append(f"GNN graph affinity signal is {round(graph_score * 100)}% from GraphSAGE-style candidate-skill-role-job message passing.")
     if job.work_model != "unknown":
         parts.append(f"Work model detected as {job.work_model}.")
     parts.append(
-        f"Overall fit is {round(score * 100)} based on skill graph overlap, semantic similarity, role intent, and location preference."
+        f"Overall fit is {round(score * 100)} based on skill overlap, semantic similarity, graph affinity, role intent, and location preference."
     )
     return " ".join(parts)

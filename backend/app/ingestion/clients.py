@@ -3,7 +3,9 @@
 from typing import List, Optional
 import requests
 from backend.app.core.config import get_settings
+from backend.app.ingestion.normalize import stable_job_id
 from backend.app.ingestion.normalize import dedupe_jobs, from_adzuna, from_jsearch, from_usajobs
+from backend.app.matching.skills import extract_skills
 from backend.app.schemas import IntegrationSettings, Job, SearchRequest
 
 
@@ -19,7 +21,64 @@ class JobIngestionClient:
             jobs.extend(self._usajobs(request))
         if "jsearch" in request.sources:
             jobs.extend(self._jsearch(request))
-        return dedupe_jobs(jobs)
+        deduped = dedupe_jobs(jobs)
+        if deduped:
+            return deduped
+        return self._demo_jobs(request)
+
+    def _demo_jobs(self, request: SearchRequest) -> List[Job]:
+        query_role = request.query.title() if request.query else "Machine Learning Engineer"
+        samples = [
+            (
+                f"{query_role} - New Grad",
+                "Northstar AI",
+                request.location or "Remote",
+                "Build PyTorch model serving systems with FastAPI, Docker, MLflow, evaluation pipelines, and clean experiment tracking.",
+                "remote",
+            ),
+            (
+                "AI Engineer, Agentic Workflows",
+                "Orbit Labs",
+                "Remote",
+                "Create LangGraph agents, RAG evaluation suites, OpenAI tool-calling workflows, and production telemetry with OpenTelemetry.",
+                "remote",
+            ),
+            (
+                "Recommendation Systems Engineer",
+                "ShopGraph",
+                "New York, NY",
+                "Train ranking models and graph neural networks for recommendations using Python, PyTorch Geometric, SQL, and feature stores.",
+                "hybrid",
+            ),
+            (
+                "Machine Learning Platform Engineer",
+                "VectorWorks",
+                "San Francisco, CA",
+                "Own model serving, vector search, Kubernetes deployments, CI/CD, PostgreSQL, Redis, and MLOps reliability.",
+                "onsite",
+            ),
+            (
+                "Applied AI Engineer",
+                "TalentLoop",
+                "United States",
+                "Ship LLM features with RAG, prompt evaluation, FastAPI services, TypeScript dashboards, and customer-facing analytics.",
+                "remote",
+            ),
+        ]
+        return [
+            Job(
+                job_id=stable_job_id("demo", title, company, location),
+                source="demo",
+                title=title,
+                company=company,
+                location=location,
+                work_model=work_model,
+                description=description,
+                apply_url="",
+                required_skills=extract_skills(f"{title} {description}"),
+            )
+            for title, company, location, description, work_model in samples
+        ]
 
     def _adzuna(self, request: SearchRequest) -> List[Job]:
         settings = get_settings()

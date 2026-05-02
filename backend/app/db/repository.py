@@ -125,8 +125,16 @@ def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProf
     else:
         session.add(candidate_to_record(profile))
 
-    if not session.get(AutofillRecord, profile.candidate_id):
-        session.add(AutofillRecord(**autofill_from_candidate(profile).model_dump()))
+    autofill = session.get(AutofillRecord, profile.candidate_id)
+    candidate_autofill = autofill_from_candidate(profile)
+    if not autofill:
+        session.add(AutofillRecord(**candidate_autofill.model_dump()))
+    else:
+        for key in ("legal_name", "email", "phone", "linkedin", "github", "portfolio"):
+            current = getattr(autofill, key)
+            incoming = getattr(candidate_autofill, key)
+            if incoming and not current:
+                setattr(autofill, key, incoming)
     return profile
 
 

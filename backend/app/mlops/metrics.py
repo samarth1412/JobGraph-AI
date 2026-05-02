@@ -5,5 +5,5 @@ from backend.app.services import store
 
 def system_metrics() -> dict:
     counts = store.metrics_counts()
-    counts.update({"model": "hybrid_skill_graph_semantic_ranker_v1", "next_model": "heterogeneous_graphsage_link_prediction"})
+    counts.update({"model": "hybrid_skill_semantic_graphsage_ranker_v3", "next_model": "trained_pytorch_geometric_graphsage_link_prediction"})
     return counts

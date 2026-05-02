@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8020";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
 
 type Job = {
   job_id: string;
@@ -13,6 +13,8 @@ type Job = {
   work_model: string;
   description: string;
   apply_url: string;
+  salary_min?: number | null;
+  salary_max?: number | null;
   required_skills: string[];
 };
 
@@ -27,12 +29,9 @@ type Match = {
 
 type Metrics = {
   jobs_total: number;
-  candidates_total: number;
   applications_total: number;
   ingestion_runs_total: number;
   jobs_by_source: Record<string, number>;
-  model: string;
-  next_model: string;
 };
 
 type ApplicationEvent = {
@@ -43,24 +42,13 @@ type ApplicationEvent = {
   timestamp: string;
 };
 
-type IntegrationStatus = {
-  adzuna_configured: boolean;
-  usajobs_configured: boolean;
-  jsearch_configured: boolean;
-  usajobs_user_agent: string;
-};
-
 type IngestionRun = {
   id: number;
   query: string;
   location: string;
   sources: string[];
-  jobs_found: number;
   jobs_saved: number;
   status: string;
-  error: string;
-  started_at: string;
-  finished_at?: string;
 };
 
 async function apiGet<T>(path: string): Promise<T> {
@@ -75,349 +63,312 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `POST ${path} failed`);
-  }
+  if (!response.ok) throw new Error((await response.text()) || `POST ${path} failed`);
   return response.json();
 }
 
-async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `PUT ${path} failed`);
-  }
-  return response.json();
+const tabs = ["Recommended", "Liked", "Applied", "External"];
+const nav = ["Jobs", "Resume", "Profile", "Agent", "Coaching", "Interview"];
+const filters = ["United States", "Machine Learning Engineer", "Intern/New Grad", "Full-time", "Remote", "Past week", "0-1 Years", "Industry"];
+
+function sourceLabel(source: string) {
+  return source === "demo" ? "Demo" : source.toUpperCase();
 }
 
-async function apiDelete<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`, { method: "DELETE" });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `DELETE ${path} failed`);
-  }
-  return response.json();
+function scoreLabel(score: number) {
+  if (score >= 75) return "STRONG MATCH";
+  if (score >= 55) return "GOOD MATCH";
+  return "FAIR MATCH";
+}
+
+function companyMark(company: string) {
+  return company
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
 }
 
 export default function Home() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [applications, setApplications] = useState<ApplicationEvent[]>([]);
-  const [integrations, setIntegrations] = useState<IntegrationStatus | null>(null);
   const [runs, setRuns] = useState<IngestionRun[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
-  const [agentPrompt, setAgentPrompt] = useState("Find my strongest ML new grad jobs and explain the top match.");
-  const [agentOutput, setAgentOutput] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState(false);
   const [query, setQuery] = useState("machine learning engineer new grad");
   const [location, setLocation] = useState("United States");
-  const [sources, setSources] = useState<string[]>(["adzuna", "usajobs"]);
-  const [settings, setSettings] = useState({
-    adzuna_app_id: "",
-    adzuna_app_key: "",
-    usajobs_user_agent: "",
-    usajobs_api_key: "",
-    jsearch_api_key: "",
-  });
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [agentOutput, setAgentOutput] = useState<unknown>(null);
+
+  async function loadDashboard() {
+    const [matchData, metricData, applicationData, runData] = await Promise.all([
+      apiGet<{ matches: Match[] }>("/matches/default?k=30"),
+      apiGet<Metrics>("/mlops/metrics"),
+      apiGet<ApplicationEvent[]>("/applications/default"),
+      apiGet<IngestionRun[]>("/jobs/ingestion-runs?limit=6"),
+    ]);
+    return { matchData, metricData, applicationData, runData };
+  }
 
   async function refresh() {
     setLoading(true);
-    const [matchData, metricData, applicationData, integrationData, runData] = await Promise.all([
-      apiGet<{ matches: Match[] }>("/matches/default?k=20"),
-      apiGet<Metrics>("/mlops/metrics"),
-      apiGet<ApplicationEvent[]>("/applications/default"),
-      apiGet<IntegrationStatus>("/settings/integrations"),
-      apiGet<IngestionRun[]>("/jobs/ingestion-runs?limit=8"),
-    ]);
-    setMatches(matchData.matches || []);
-    setMetrics(metricData);
-    setApplications(applicationData);
-    setIntegrations(integrationData);
-    setRuns(runData);
-    setSelectedId((current) => current || matchData.matches?.[0]?.job.job_id || "");
-    setLoading(false);
+    try {
+      let data = await loadDashboard();
+      if (!data.matchData.matches?.length) {
+        await apiPost("/jobs/ingest", {
+          query,
+          location,
+          page: 1,
+          results_per_page: 25,
+          sources: [],
+        });
+        data = await loadDashboard();
+      }
+      setMatches(data.matchData.matches || []);
+      setMetrics(data.metricData);
+      setApplications(data.applicationData);
+      setRuns(data.runData);
+    } catch (error) {
+      setAgentOutput({ error: String(error), api: API });
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    refresh().catch((error) => {
-      setAgentOutput({ error: String(error), hint: `Check that FastAPI is running at ${API}` });
-      setLoading(false);
-    });
+    refresh();
   }, []);
 
-  const selected = useMemo(
-    () => matches.find((item) => item.job.job_id === selectedId) || matches[0],
-    [matches, selectedId]
-  );
+  const appliedIds = useMemo(() => new Set(applications.map((item) => item.job_id)), [applications]);
+  const sourceSummary = useMemo(() => Object.entries(metrics?.jobs_by_source || {}), [metrics]);
 
-  function toggleSource(source: string) {
-    setSources((current) =>
-      current.includes(source) ? current.filter((item) => item !== source) : [...current, source]
-    );
-  }
-
-  async function saveSettings() {
-    const status = await apiPut<IntegrationStatus>("/settings/integrations", settings);
-    setIntegrations(status);
-    setAgentOutput({ intent: "save_integrations", result: status });
-  }
-
-  async function clearSettings() {
-    const status = await apiDelete<IntegrationStatus>("/settings/integrations");
-    setSettings({
-      adzuna_app_id: "",
-      adzuna_app_key: "",
-      usajobs_user_agent: "",
-      usajobs_api_key: "",
-      jsearch_api_key: "",
-    });
-    setIntegrations(status);
-    setAgentOutput({ intent: "clear_integrations", result: status });
-  }
-
-  async function ingestJobs() {
-    setIngesting(true);
+  async function searchJobs() {
+    setSearching(true);
     try {
-      const output = await apiPost("/jobs/ingest", {
+      const result = await apiPost("/jobs/ingest", {
         query,
         location,
         page: 1,
         results_per_page: 25,
-        sources,
+        sources: ["adzuna", "usajobs", "jsearch"],
       });
-      setAgentOutput({ intent: "ingest_jobs", result: output });
-      await refresh();
-    } catch (error) {
-      setAgentOutput({
-        intent: "ingest_jobs",
-        error: String(error),
-        hint: "If you saved test or invalid API keys, clear the fields and save settings again, or use valid Adzuna/USAJOBS credentials.",
-      });
+      setAgentOutput({ intent: "search_jobs", result });
       await refresh();
     } finally {
-      setIngesting(false);
+      setSearching(false);
     }
   }
 
-  async function runAgent(message = agentPrompt) {
-    const output = await apiPost("/agent", { candidate_id: "default", message });
+  async function runAgent(match: Match) {
+    const output = await apiPost("/agent", {
+      candidate_id: "default",
+      message: `explain ${match.job.job_id}`,
+    });
     setAgentOutput(output);
   }
 
-  async function track(status: string) {
-    if (!selected) return;
+  async function track(match: Match, status: string) {
     await apiPost("/applications", {
       candidate_id: "default",
-      job_id: selected.job.job_id,
+      job_id: match.job.job_id,
       status,
-      note: `${selected.job.title} at ${selected.job.company}`,
+      note: `${match.job.title} at ${match.job.company}`,
     });
     await refresh();
   }
 
+  async function applyWithAutofill(match: Match) {
+    if (match.job.apply_url) {
+      await track(match, "applied");
+      window.open(match.job.apply_url, "_blank", "noopener,noreferrer");
+    } else {
+      setAgentOutput({
+        intent: "apply_with_autofill",
+        result: "This is a demo or provider result without an external apply URL. Add valid job API keys and run Search jobs for real company portal links.",
+      });
+    }
+  }
+
+  async function uploadResume(file: File | null) {
+    if (!file) return;
+    setResumeUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${API}/resume/upload?candidate_id=default`, {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) throw new Error((await response.text()) || "Resume upload failed");
+      const profile = await response.json();
+      setAgentOutput({ intent: "resume_upload", result: profile });
+      await refresh();
+    } catch (error) {
+      setAgentOutput({ intent: "resume_upload", error: String(error) });
+    } finally {
+      setResumeUploading(false);
+    }
+  }
+
   return (
-    <div className="app">
-      <div className="workspace">
-        <header className="topnav">
-          <div className="brand">
-            <div className="brand-mark">JG</div>
-            <div>
-              <h1>JobGraph AI</h1>
-              <span>AI job search copilot</span>
-            </div>
-          </div>
-          <nav className="nav-links">
-            <a href="#discover">Discover</a>
-            <a href="#matches">Matches</a>
-            <a href="#copilot">Copilot</a>
-            <a href="#tracker">Tracker</a>
-            <a href="#settings">Settings</a>
-          </nav>
-          <button className="button secondary" onClick={() => refresh()}>
-            {loading ? "Refreshing" : "Refresh"}
-          </button>
-        </header>
+    <main className="appShell">
+      <aside className="leftNav">
+        <div className="brand">
+          <div className="brandIcon">JG</div>
+          <strong>JobGraph</strong>
+        </div>
 
-        <section id="discover" className="hero">
-          <div className="hero-panel">
-            <div className="eyebrow">Personalized AI job matches</div>
-            <h2>Find roles that match your resume, then tailor and track every application.</h2>
-            <p className="hero-copy">
-              Search live sources, rank jobs against your profile, prepare tailored materials, and keep applications organized from one clean workspace.
-            </p>
+        <nav>
+          {nav.map((item) => (
+            <a className={item === "Jobs" ? "active" : ""} href="#" key={item}>
+              <span>{item === "Jobs" ? "▣" : "○"}</span>
+              {item}
+              {item === "Interview" && <em>NEW</em>}
+            </a>
+          ))}
+        </nav>
 
-            <div className="search-box">
-              <label className="field">
-                Job title or keyword
-                <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} />
-              </label>
-              <label className="field">
-                Location
-                <input className="input" value={location} onChange={(event) => setLocation(event.target.value)} />
-              </label>
-              <button className="button" onClick={ingestJobs} disabled={ingesting}>
-                {ingesting ? "Searching" : "Find jobs"}
-              </button>
-            </div>
+        <div className="referBox">
+          <strong>Resume Autofill</strong>
+          <span>Upload your resume so the extension can fill job portals with your profile.</span>
+          <label className="resumeUpload">
+            {resumeUploading ? "Uploading..." : "Upload resume"}
+            <input type="file" accept=".pdf,.txt" onChange={(event) => uploadResume(event.target.files?.[0] || null)} />
+          </label>
+        </div>
 
-            <div className="source-row">
-              {["adzuna", "usajobs", "jsearch"].map((source) => (
-                <label className="check" key={source}>
-                  <input type="checkbox" checked={sources.includes(source)} onChange={() => toggleSource(source)} />
-                  {source}
-                </label>
-              ))}
-            </div>
+        <div className="navBottom">
+          <a href="#messages">Messages</a>
+          <a href="#feedback">Feedback</a>
+          <a href="#settings">Settings</a>
+        </div>
+      </aside>
 
-            <div className="status-row">
-              <span className={integrations?.adzuna_configured ? "pill ok" : "pill"}>Adzuna</span>
-              <span className={integrations?.usajobs_configured ? "pill ok" : "pill"}>USAJOBS</span>
-              <span className={integrations?.jsearch_configured ? "pill ok" : "pill"}>JSearch</span>
-            </div>
-          </div>
-
-          <div className="hero-panel">
-            <div className="stat-grid">
-              <div className="stat"><span>Total jobs</span><strong>{metrics?.jobs_total ?? "-"}</strong></div>
-              <div className="stat"><span>Applications</span><strong>{metrics?.applications_total ?? "-"}</strong></div>
-              <div className="stat"><span>Ingestion runs</span><strong>{metrics?.ingestion_runs_total ?? "-"}</strong></div>
-              <div className="stat"><span>Candidates</span><strong>{metrics?.candidates_total ?? "-"}</strong></div>
-              <div className="stat wide"><span>Ranking model</span><strong>{metrics?.model ?? "offline"}</strong></div>
-            </div>
-          </div>
-        </section>
-
-        <section id="matches" className="content-grid">
-          <div className="panel">
-            <h3>Best matches</h3>
-            <div className="feed">
-              {matches.map((match) => (
-                <button
-                  key={match.job.job_id}
-                  className={`job-card ${selected?.job.job_id === match.job.job_id ? "active" : ""}`}
-                  onClick={() => setSelectedId(match.job.job_id)}
-                >
-                  <div className="detail-header">
-                    <div>
-                      <h4>{match.job.title}</h4>
-                      <div className="job-meta">{match.job.company} | {match.job.location || "Unknown"} | {match.job.source}</div>
-                    </div>
-                    <span className="score">{match.score}%</span>
-                  </div>
-                  <div className="tags">
-                    {match.matched_skills.slice(0, 4).map((skill) => <span className="tag" key={skill}>{skill}</span>)}
-                    {match.missing_skills.slice(0, 2).map((skill) => <span className="tag missing" key={skill}>{skill}</span>)}
-                  </div>
+      <section className="feedShell">
+        <header className="feedTop">
+          <div className="titleRow">
+            <h1>JOBS</h1>
+            <span>›</span>
+            <nav className="tabs">
+              {tabs.map((tab) => (
+                <button className={tab === "Recommended" ? "selected" : ""} key={tab}>
+                  {tab}
+                  {tab !== "Recommended" && <b>{tab === "Applied" ? applications.length : 0}</b>}
                 </button>
               ))}
-            </div>
+            </nav>
           </div>
+          <label className="topSearch">
+            <span>⌕</span>
+            <input placeholder="Search by title or company" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>
+        </header>
 
-          <div className="detail-card">
-            {selected ? (
-              <>
-                <div className="detail-header">
-                  <div>
-                    <h3>{selected.job.title}</h3>
-                    <div className="job-meta">{selected.job.company} | {selected.job.location} | {selected.job.work_model}</div>
-                  </div>
-                  <span className="score">{selected.score}%</span>
-                </div>
-                <p className="detail-copy">{selected.explanation}</p>
-                <div className="split">
-                  <div>
-                    <h4>Strengths</h4>
-                    <div className="tags">{selected.matched_skills.map((skill) => <span className="tag" key={skill}>{skill}</span>)}</div>
-                  </div>
-                  <div>
-                    <h4>Gaps</h4>
-                    <div className="tags">{selected.missing_skills.map((skill) => <span className="tag missing" key={skill}>{skill}</span>)}</div>
-                  </div>
-                </div>
-                <div className="actions">
-                  <button className="button" onClick={() => runAgent(`tailor resume for ${selected.job.job_id}`)}>Tailor resume</button>
-                  <button className="button secondary" onClick={() => runAgent(`cover letter for ${selected.job.job_id}`)}>Cover letter</button>
-                  <button className="button ghost" onClick={() => track("saved")}>Save</button>
-                  <button className="button ghost" onClick={() => track("applied")}>Applied</button>
-                </div>
-              </>
-            ) : (
-              <p className="muted">No matches loaded.</p>
-            )}
+        <section className="filterBar">
+          <div className="chips">
+            {filters.map((filter, index) => (
+              <button className={index < 6 ? "chip activeChip" : "chip"} key={filter}>
+                {filter}
+                {index === 1 && <b>+20</b>}
+                {index === 2 && <b>+1</b>}
+                <span>⌄</span>
+              </button>
+            ))}
+            <button className="hiddenChip">▣ Hidden Jobs</button>
+            <button className="allFilters">••• All Filters</button>
           </div>
+          <div className="rightSort">
+            <button>?</button>
+            <button>Recommended ⌄</button>
+          </div>
+        </section>
 
-          <div className="side-stack">
-            <div id="copilot" className="panel">
-              <h3>Orion-style copilot</h3>
-              <textarea className="textarea" value={agentPrompt} onChange={(event) => setAgentPrompt(event.target.value)} />
-              <div className="actions">
-                <button className="button" onClick={() => runAgent()}>Ask</button>
-                {selected && <button className="button secondary" onClick={() => runAgent(`explain ${selected.job.job_id}`)}>Explain job</button>}
+        <section className="quickSearch">
+          <input value={location} onChange={(event) => setLocation(event.target.value)} />
+          <button onClick={searchJobs} disabled={searching}>{searching ? "Searching" : "Search jobs"}</button>
+          <span>{loading ? "Loading jobs..." : `${matches.length} recommended jobs. Demo jobs are clearly labeled.`}</span>
+        </section>
+
+        <section className="jobFeed">
+          {matches.map((match, index) => (
+            <article className="jobCard" key={match.job.job_id}>
+              <div className="jobMain">
+                <div className="companyLogo">{companyMark(match.job.company)}</div>
+                <div className="jobInfo">
+                  <div className="jobBadges">
+                    <span>{index < 2 ? "4 hours ago" : "9 minutes ago"}</span>
+                    {index === 0 && <span>Be an early applicant</span>}
+                  </div>
+                  <h2>{match.job.title}</h2>
+                  <p>
+                    <strong>{match.job.company}</strong>
+                    <span>/ {sourceLabel(match.job.source)} {match.job.apply_url ? "/ Live opening" : "/ Demo or no apply URL"}</span>
+                  </p>
+                  <div className="facts">
+                    <span>⌖ {match.job.location || "United States"}</span>
+                    <span>◴ Full-time</span>
+                    <span>⌂ {match.job.work_model || "Remote"}</span>
+                    <span>♔ New Grad</span>
+                    <span>$ {match.job.salary_min ? `${match.job.salary_min}/hr` : "Competitive"}</span>
+                  </div>
+                  <div className="cardFoot">
+                    <span>{index === 0 ? "Less than 25 applicants" : `${72 + index * 11} applicants`}</span>
+                    <div className="cardActions">
+                      <button aria-label="Hide job">⊘</button>
+                      <button aria-label="Like job">♡</button>
+                      <button className="orion" onClick={() => runAgent(match)}>✦ ASK ORION</button>
+                      <button className="apply" onClick={() => applyWithAutofill(match)}>
+                        {match.job.apply_url ? (appliedIds.has(match.job.job_id) ? "APPLIED" : "APPLY WITH AUTOFILL") : "NO REAL APPLY LINK"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <pre className="output">{agentOutput ? JSON.stringify(agentOutput, null, 2) : "Copilot output appears here."}</pre>
-            </div>
 
-            <div id="tracker" className="panel">
-              <h3>Tracker</h3>
-              <div className="tracker-list">
-                {applications.length === 0 && <p className="job-meta">No applications tracked yet.</p>}
-                {applications.slice(0, 6).map((item, index) => (
-                  <div className="tracker-item" key={`${item.job_id}-${item.timestamp}-${index}`}>
-                    <strong>{item.status.toUpperCase()}</strong>
-                    <div className="job-meta">{item.note || item.job_id}</div>
-                    <div className="job-meta">{new Date(item.timestamp).toLocaleString()}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section id="settings" className="hero">
-          <div className="panel">
-            <h3>Job source settings</h3>
-            <div className="form-grid">
-              <input className="input" placeholder="Adzuna app id" value={settings.adzuna_app_id} onChange={(e) => setSettings({ ...settings, adzuna_app_id: e.target.value })} />
-              <input className="input" placeholder="Adzuna app key" type="password" value={settings.adzuna_app_key} onChange={(e) => setSettings({ ...settings, adzuna_app_key: e.target.value })} />
-              <input className="input" placeholder="USAJOBS user agent email" value={settings.usajobs_user_agent} onChange={(e) => setSettings({ ...settings, usajobs_user_agent: e.target.value })} />
-              <input className="input" placeholder="USAJOBS API key" type="password" value={settings.usajobs_api_key} onChange={(e) => setSettings({ ...settings, usajobs_api_key: e.target.value })} />
-              <input className="input full" placeholder="JSearch RapidAPI key" type="password" value={settings.jsearch_api_key} onChange={(e) => setSettings({ ...settings, jsearch_api_key: e.target.value })} />
-            </div>
-            <div className="actions">
-              <button className="button" onClick={saveSettings}>Save keys locally</button>
-              <button className="button ghost" onClick={clearSettings}>Clear keys</button>
-              <button className="button secondary" onClick={() => runAgent("prepare autofill")}>Prepare autofill</button>
-            </div>
-          </div>
-
-          <div className="panel">
-            <h3>Ingestion history</h3>
-            <div className="tracker-list">
-              {runs.length === 0 && <p className="job-meta">No ingestion runs yet.</p>}
-              {runs.map((run) => (
-                <div className="tracker-item" key={run.id}>
-                  <strong>{run.status.toUpperCase()} | {run.jobs_saved} saved</strong>
-                  <div className="job-meta">{run.query} | {run.location} | {run.sources.join(", ")}</div>
-                  {run.error && <div className="error-line">{run.error}</div>}
+              <aside className="scorePanel">
+                <button aria-label="More">•••</button>
+                <div className="scoreCircle">{Math.round(match.score)}%</div>
+                <strong>{scoreLabel(match.score)}</strong>
+                <div className="scoreReasons">
+                  {match.matched_skills.slice(0, 3).map((skill) => (
+                    <span key={skill}>✓ {skill}</span>
+                  ))}
+                  {!match.matched_skills.length && <span>✓ Profile overlap</span>}
                 </div>
-              ))}
+              </aside>
+            </article>
+          ))}
+
+          {!matches.length && (
+            <div className="emptyState">
+              <strong>{loading ? "Loading recommendations..." : "No recommendations loaded"}</strong>
+              <span>API: {API}</span>
+              <button onClick={searchJobs}>Create demo recommendations</button>
             </div>
-          </div>
+          )}
         </section>
 
-        <section id="autofill" className="panel">
-          <h3>Autofill extension</h3>
-          <p className="detail-copy">
-            Load <strong>apps/extension</strong>, point it at <strong>{API}</strong>, and review all filled fields before submitting.
-          </p>
-        </section>
-      </div>
-    </div>
+        <aside className="orionDrawer">
+          <div>
+            <strong>Orion output</strong>
+            <span>{metrics?.jobs_total ?? 0} jobs / {metrics?.ingestion_runs_total ?? 0} searches</span>
+          </div>
+          <pre>{agentOutput ? JSON.stringify(agentOutput, null, 2) : "Ask Orion from any job card."}</pre>
+          <div className="sourceCounts">
+            {sourceSummary.map(([source, count]) => (
+              <span key={source}>{source}: {count}</span>
+            ))}
+          </div>
+          <div className="recentRuns">
+            {runs.slice(0, 2).map((run) => (
+              <span key={run.id}>{run.status}: {run.jobs_saved} saved</span>
+            ))}
+          </div>
+        </aside>
+      </section>
+    </main>
   );
 }

@@ -12,6 +12,7 @@ from backend.app.agents.copilot import run_copilot
 from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
 from backend.app.matching.graph import build_graph_snapshot
+from backend.app.matching.graphsage import graphsage_affinity_scores
 from backend.app.matching.ranker import rank_jobs
 from backend.app.mlops.metrics import system_metrics
 from backend.app.resume.parser import extract_text_from_pdf, parse_resume_text
@@ -31,6 +32,19 @@ app = FastAPI(title="JobGraph AI", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 init_db()
 seed()
+
+
+@app.get("/")
+def root() -> Dict[str, Any]:
+    return {
+        "app": "JobGraph AI",
+        "status": "ok",
+        "web_app": "http://127.0.0.1:3020",
+        "docs": "/docs",
+        "health": "/health",
+        "matches": "/matches/default?k=10",
+        "ingest": "POST /jobs/ingest",
+    }
 
 
 @app.get("/health")
@@ -110,7 +124,16 @@ def save_candidate(profile: CandidateProfile) -> Dict[str, Any]:
 @app.get("/matches/{candidate_id}")
 def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
-    matches = rank_jobs(candidate, store.list_jobs(), k=k)
+    jobs = store.list_jobs()
+    if not jobs:
+        jobs = JobIngestionClient(IntegrationSettings()).search(
+            SearchRequest(sources=[], query="machine learning engineer new grad", location="United States")
+        )
+        store.upsert_jobs(jobs)
+    live_jobs = [job for job in jobs if job.source != "demo"]
+    if live_jobs:
+        jobs = live_jobs
+    matches = rank_jobs(candidate, jobs, k=k)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
 
@@ -118,6 +141,22 @@ def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
 def graph_snapshot(candidate_id: str = "default") -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
     return build_graph_snapshot(candidate, store.list_jobs())
+
+
+@app.get("/gnn/{candidate_id}")
+def gnn_snapshot(candidate_id: str = "default", k: int = 10) -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    jobs = store.list_jobs()
+    live_jobs = [job for job in jobs if job.source != "demo"]
+    if live_jobs:
+        jobs = live_jobs
+    scores, diagnostics = graphsage_affinity_scores(candidate, jobs)
+    ranked = sorted(zip(jobs, scores), key=lambda item: item[1], reverse=True)[:k]
+    return {
+        "candidate_id": candidate_id,
+        "diagnostics": diagnostics.__dict__,
+        "scores": [{"job_id": job.job_id, "title": job.title, "source": job.source, "gnn_score": round(score * 100, 2)} for job, score in ranked],
+    }
 
 
 @app.post("/agent")
