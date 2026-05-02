@@ -1,19 +1,29 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.app.agents.copilot import run_copilot
+from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
 from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.ranker import rank_jobs
 from backend.app.mlops.metrics import system_metrics
 from backend.app.resume.parser import extract_text_from_pdf, parse_resume_text
-from backend.app.schemas import AgentRequest, ApplicationEvent, AutofillProfile, CandidateProfile, SearchRequest
-from backend.app.db.session import init_db
+from backend.app.schemas import (
+    AgentRequest,
+    ApplicationEvent,
+    AutofillProfile,
+    CandidateProfile,
+    IngestionRun,
+    IntegrationSettings,
+    SearchRequest,
+)
 from backend.app.seed import seed
 from backend.app.services import store
 
@@ -30,9 +40,39 @@ def health() -> Dict[str, str]:
 
 @app.post("/jobs/ingest")
 def ingest_jobs(request: SearchRequest) -> Dict[str, Any]:
-    jobs = JobIngestionClient().search(request)
-    store.upsert_jobs(jobs)
-    return {"ingested": len(jobs), "jobs": [job.model_dump() for job in jobs]}
+    run = store.save_ingestion_run(
+        IngestionRun(query=request.query, location=request.location, sources=request.sources, status="running")
+    )
+    try:
+        jobs = JobIngestionClient(store.get_integration_settings()).search(request)
+        store.upsert_jobs(jobs)
+        run.jobs_found = len(jobs)
+        run.jobs_saved = len(jobs)
+        run.status = "success"
+        run.finished_at = datetime.utcnow()
+        store.save_ingestion_run(run)
+        return {"ingested": len(jobs), "run": run.model_dump(), "jobs": [job.model_dump() for job in jobs]}
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.finished_at = datetime.utcnow()
+        store.save_ingestion_run(run)
+        raise
+
+
+@app.get("/jobs/ingestion-runs")
+def ingestion_runs(limit: int = 10) -> List[Dict[str, Any]]:
+    return [run.model_dump() for run in store.list_ingestion_runs(limit=limit)]
+
+
+@app.get("/settings/integrations")
+def integration_status() -> Dict[str, Any]:
+    return store.get_integration_status().model_dump()
+
+
+@app.put("/settings/integrations")
+def save_integration_settings(settings: IntegrationSettings) -> Dict[str, Any]:
+    return store.save_integration_settings(settings).model_dump()
 
 
 @app.get("/jobs")

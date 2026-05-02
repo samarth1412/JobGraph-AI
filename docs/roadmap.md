@@ -2,6 +2,7 @@
 
 ## Phase 1
 - API-backed job ingestion from Adzuna and USAJOBS.
+- In-app API key status, job source selection, ingestion trigger, and ingestion history.
 - Resume upload and skill extraction.
 - Skill graph ranker and explanations.
 - Application tracker and autofill profile.

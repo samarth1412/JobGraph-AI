@@ -9,6 +9,7 @@ JobGraph AI ingests real-time jobs, parses a candidate resume, builds a candidat
 ## Core Capabilities
 
 - Real-time job ingestion from Adzuna, USAJOBS, and optional JSearch.
+- Dashboard controls for saving local API credentials, selecting job sources, running ingestion, and reviewing ingestion history.
 - Resume PDF/text parsing into a structured candidate profile.
 - Skill extraction and normalized job schema.
 - Candidate-job-skill graph construction.
@@ -52,6 +53,7 @@ DATABASE_URL=sqlite:///./jobgraph.db
 ```
 
 The app runs without keys using local demo data, but real-time ingestion requires API credentials.
+The dashboard stores development API credentials in the local database and only returns configured/not-configured status to the UI.
 
 For PostgreSQL, set:
 

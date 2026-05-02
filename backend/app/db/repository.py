@@ -5,8 +5,23 @@ from typing import List
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.app.db.models import ApplicationRecord, AutofillRecord, CandidateRecord, JobRecord
-from backend.app.schemas import ApplicationEvent, AutofillProfile, CandidateProfile, Job
+from backend.app.db.models import (
+    ApplicationRecord,
+    AutofillRecord,
+    CandidateRecord,
+    IngestionRunRecord,
+    IntegrationSettingsRecord,
+    JobRecord,
+)
+from backend.app.schemas import (
+    ApplicationEvent,
+    AutofillProfile,
+    CandidateProfile,
+    IngestionRun,
+    IntegrationSettings,
+    IntegrationStatus,
+    Job,
+)
 
 
 def job_to_record(job: Job) -> JobRecord:
@@ -167,5 +182,77 @@ def counts(session: Session) -> dict:
         "jobs_total": session.scalar(select(func.count(JobRecord.job_id))) or 0,
         "candidates_total": session.scalar(select(func.count(CandidateRecord.candidate_id))) or 0,
         "applications_total": session.scalar(select(func.count(ApplicationRecord.id))) or 0,
+        "ingestion_runs_total": session.scalar(select(func.count(IngestionRunRecord.id))) or 0,
         "jobs_by_source": {source: count for source, count in source_rows},
     }
+
+
+def save_integration_settings(session: Session, settings: IntegrationSettings) -> IntegrationStatus:
+    record = session.get(IntegrationSettingsRecord, 1)
+    payload = settings.model_dump()
+    if record:
+        for key, value in payload.items():
+            setattr(record, key, value)
+    else:
+        session.add(IntegrationSettingsRecord(id=1, **payload))
+    return integration_status_from_settings(settings)
+
+
+def get_integration_settings(session: Session) -> IntegrationSettings:
+    record = session.get(IntegrationSettingsRecord, 1)
+    if not record:
+        return IntegrationSettings()
+    return IntegrationSettings(
+        adzuna_app_id=record.adzuna_app_id,
+        adzuna_app_key=record.adzuna_app_key,
+        usajobs_user_agent=record.usajobs_user_agent,
+        usajobs_api_key=record.usajobs_api_key,
+        jsearch_api_key=record.jsearch_api_key,
+    )
+
+
+def integration_status_from_settings(settings: IntegrationSettings) -> IntegrationStatus:
+    return IntegrationStatus(
+        adzuna_configured=bool(settings.adzuna_app_id and settings.adzuna_app_key),
+        usajobs_configured=bool(settings.usajobs_user_agent and settings.usajobs_api_key),
+        jsearch_configured=bool(settings.jsearch_api_key),
+        usajobs_user_agent=settings.usajobs_user_agent,
+    )
+
+
+def get_integration_status(session: Session) -> IntegrationStatus:
+    return integration_status_from_settings(get_integration_settings(session))
+
+
+def save_ingestion_run(session: Session, run: IngestionRun) -> IngestionRun:
+    payload = run.model_dump(exclude={"id"})
+    if run.id:
+        record = session.get(IngestionRunRecord, run.id)
+        if record:
+            for key, value in payload.items():
+                setattr(record, key, value)
+            return record_to_ingestion_run(record)
+    record = IngestionRunRecord(**payload)
+    session.add(record)
+    session.flush()
+    return record_to_ingestion_run(record)
+
+
+def record_to_ingestion_run(record: IngestionRunRecord) -> IngestionRun:
+    return IngestionRun(
+        id=record.id,
+        query=record.query,
+        location=record.location,
+        sources=list(record.sources or []),
+        jobs_found=record.jobs_found,
+        jobs_saved=record.jobs_saved,
+        status=record.status,
+        error=record.error,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+    )
+
+
+def list_ingestion_runs(session: Session, limit: int = 10) -> List[IngestionRun]:
+    rows = session.scalars(select(IngestionRunRecord).order_by(IngestionRunRecord.started_at.desc()).limit(limit)).all()
+    return [record_to_ingestion_run(row) for row in rows]

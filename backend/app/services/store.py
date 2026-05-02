@@ -4,7 +4,7 @@ from typing import List
 
 from backend.app.db import repository
 from backend.app.db.session import session_scope
-from backend.app.schemas import ApplicationEvent, AutofillProfile, CandidateProfile, Job
+from backend.app.schemas import ApplicationEvent, AutofillProfile, CandidateProfile, IngestionRun, IntegrationSettings, IntegrationStatus, Job
 
 
 def upsert_jobs(jobs: List[Job]) -> List[Job]:
@@ -55,3 +55,28 @@ def get_autofill(candidate_id: str) -> AutofillProfile:
 def metrics_counts() -> dict:
     with session_scope() as session:
         return repository.counts(session)
+
+
+def save_integration_settings(settings: IntegrationSettings) -> IntegrationStatus:
+    with session_scope() as session:
+        return repository.save_integration_settings(session, settings)
+
+
+def get_integration_settings() -> IntegrationSettings:
+    with session_scope() as session:
+        return repository.get_integration_settings(session)
+
+
+def get_integration_status() -> IntegrationStatus:
+    with session_scope() as session:
+        return repository.get_integration_status(session)
+
+
+def save_ingestion_run(run: IngestionRun) -> IngestionRun:
+    with session_scope() as session:
+        return repository.save_ingestion_run(session, run)
+
+
+def list_ingestion_runs(limit: int = 10) -> List[IngestionRun]:
+    with session_scope() as session:
+        return repository.list_ingestion_runs(session, limit=limit)

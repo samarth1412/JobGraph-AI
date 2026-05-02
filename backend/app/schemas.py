@@ -42,6 +42,34 @@ class SearchRequest(BaseModel):
     sources: List[str] = Field(default_factory=lambda: ["adzuna", "usajobs"])
 
 
+class IntegrationSettings(BaseModel):
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    usajobs_user_agent: str = ""
+    usajobs_api_key: str = ""
+    jsearch_api_key: str = ""
+
+
+class IntegrationStatus(BaseModel):
+    adzuna_configured: bool = False
+    usajobs_configured: bool = False
+    jsearch_configured: bool = False
+    usajobs_user_agent: str = ""
+
+
+class IngestionRun(BaseModel):
+    id: Optional[int] = None
+    query: str
+    location: str
+    sources: List[str] = Field(default_factory=list)
+    jobs_found: int = 0
+    jobs_saved: int = 0
+    status: str = "pending"
+    error: str = ""
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None
+
+
 class MatchResult(BaseModel):
     job: Job
     score: float

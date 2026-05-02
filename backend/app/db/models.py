@@ -72,3 +72,30 @@ class AutofillRecord(Base):
     education: Mapped[Dict] = mapped_column(JSON, default=dict)
     custom_answers: Mapped[Dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IntegrationSettingsRecord(Base):
+    __tablename__ = "integration_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    adzuna_app_id: Mapped[str] = mapped_column(String(256), default="")
+    adzuna_app_key: Mapped[str] = mapped_column(String(512), default="")
+    usajobs_user_agent: Mapped[str] = mapped_column(String(256), default="")
+    usajobs_api_key: Mapped[str] = mapped_column(String(512), default="")
+    jsearch_api_key: Mapped[str] = mapped_column(String(512), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IngestionRunRecord(Base):
+    __tablename__ = "ingestion_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(512), default="")
+    location: Mapped[str] = mapped_column(String(256), default="")
+    sources: Mapped[List[str]] = mapped_column(JSON, default=list)
+    jobs_found: Mapped[int] = mapped_column(Integer, default=0)
+    jobs_saved: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(64), default="pending")
+    error: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
