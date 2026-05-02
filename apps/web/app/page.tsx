@@ -189,50 +189,50 @@ export default function Home() {
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <h1>JobGraph AI</h1>
-          <p>Agentic job search OS for AI/ML roles.</p>
-        </div>
-        <nav className="nav">
-          <a href="#ingestion">Ingestion</a>
-          <a href="#matches">Matches</a>
-          <a href="#copilot">Copilot</a>
-          <a href="#tracker">Tracker</a>
-          <a href="#autofill">Autofill</a>
-        </nav>
-        <p className="side-label">
-          Hybrid ranker: skill graph overlap, semantic resume/job similarity, role intent, and location fit.
-        </p>
-      </aside>
-
-      <main className="main">
-        <section className="topbar">
-          <div>
-            <h2>Job Search Command Center</h2>
-            <p>Live ingestion, matching, tailoring, tracking, and autofill prep in one workflow.</p>
-          </div>
-          <div className="actions">
-            <button className="button secondary" onClick={() => refresh()}>{loading ? "Refreshing" : "Refresh"}</button>
-            <button className="button" onClick={() => runAgent("prepare autofill")}>Prepare Autofill</button>
-          </div>
-        </section>
-
-        <section className="metrics">
-          <div className="metric"><span>Total jobs</span><strong>{metrics?.jobs_total ?? "-"}</strong></div>
-          <div className="metric"><span>Applications</span><strong>{metrics?.applications_total ?? "-"}</strong></div>
-          <div className="metric"><span>Ingestion runs</span><strong>{metrics?.ingestion_runs_total ?? "-"}</strong></div>
-          <div className="metric"><span>Active model</span><strong style={{ fontSize: 15 }}>{metrics?.model ?? "offline"}</strong></div>
-        </section>
-
-        <section id="ingestion" className="grid">
-          <div className="panel">
-            <h3>Real-Time Job Ingestion</h3>
-            <div className="form-grid">
-              <label>Search query<input className="input" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <label>Location<input className="input" value={location} onChange={(event) => setLocation(event.target.value)} /></label>
+    <div className="app">
+      <div className="workspace">
+        <header className="topnav">
+          <div className="brand">
+            <div className="brand-mark">JG</div>
+            <div>
+              <h1>JobGraph AI</h1>
+              <span>AI job search copilot</span>
             </div>
+          </div>
+          <nav className="nav-links">
+            <a href="#discover">Discover</a>
+            <a href="#matches">Matches</a>
+            <a href="#copilot">Copilot</a>
+            <a href="#tracker">Tracker</a>
+            <a href="#settings">Settings</a>
+          </nav>
+          <button className="button secondary" onClick={() => refresh()}>
+            {loading ? "Refreshing" : "Refresh"}
+          </button>
+        </header>
+
+        <section id="discover" className="hero">
+          <div className="hero-panel">
+            <div className="eyebrow">Personalized AI job matches</div>
+            <h2>Find roles that match your resume, then tailor and track every application.</h2>
+            <p className="hero-copy">
+              Search live sources, rank jobs against your profile, prepare tailored materials, and keep applications organized from one clean workspace.
+            </p>
+
+            <div className="search-box">
+              <label className="field">
+                Job title or keyword
+                <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} />
+              </label>
+              <label className="field">
+                Location
+                <input className="input" value={location} onChange={(event) => setLocation(event.target.value)} />
+              </label>
+              <button className="button" onClick={ingestJobs} disabled={ingesting}>
+                {ingesting ? "Searching" : "Find jobs"}
+              </button>
+            </div>
+
             <div className="source-row">
               {["adzuna", "usajobs", "jsearch"].map((source) => (
                 <label className="check" key={source}>
@@ -241,51 +241,28 @@ export default function Home() {
                 </label>
               ))}
             </div>
+
             <div className="status-row">
               <span className={integrations?.adzuna_configured ? "pill ok" : "pill"}>Adzuna</span>
               <span className={integrations?.usajobs_configured ? "pill ok" : "pill"}>USAJOBS</span>
               <span className={integrations?.jsearch_configured ? "pill ok" : "pill"}>JSearch</span>
             </div>
-            <div className="actions">
-              <button className="button" onClick={ingestJobs} disabled={ingesting}>{ingesting ? "Ingesting" : "Ingest Jobs"}</button>
-              <button className="button secondary" onClick={() => refresh()}>Reload Runs</button>
-            </div>
-            <p className="job-meta">If no keys are configured, ingestion records a successful run with zero live jobs and keeps demo data available.</p>
           </div>
 
-          <div className="panel">
-            <h3>API Keys</h3>
-            <div className="form-grid">
-              <input className="input" placeholder="Adzuna app id" value={settings.adzuna_app_id} onChange={(e) => setSettings({ ...settings, adzuna_app_id: e.target.value })} />
-              <input className="input" placeholder="Adzuna app key" type="password" value={settings.adzuna_app_key} onChange={(e) => setSettings({ ...settings, adzuna_app_key: e.target.value })} />
-              <input className="input" placeholder="USAJOBS user agent email" value={settings.usajobs_user_agent} onChange={(e) => setSettings({ ...settings, usajobs_user_agent: e.target.value })} />
-              <input className="input" placeholder="USAJOBS API key" type="password" value={settings.usajobs_api_key} onChange={(e) => setSettings({ ...settings, usajobs_api_key: e.target.value })} />
-              <input className="input full" placeholder="JSearch RapidAPI key" type="password" value={settings.jsearch_api_key} onChange={(e) => setSettings({ ...settings, jsearch_api_key: e.target.value })} />
+          <div className="hero-panel">
+            <div className="stat-grid">
+              <div className="stat"><span>Total jobs</span><strong>{metrics?.jobs_total ?? "-"}</strong></div>
+              <div className="stat"><span>Applications</span><strong>{metrics?.applications_total ?? "-"}</strong></div>
+              <div className="stat"><span>Ingestion runs</span><strong>{metrics?.ingestion_runs_total ?? "-"}</strong></div>
+              <div className="stat"><span>Candidates</span><strong>{metrics?.candidates_total ?? "-"}</strong></div>
+              <div className="stat wide"><span>Ranking model</span><strong>{metrics?.model ?? "offline"}</strong></div>
             </div>
-            <div className="actions">
-              <button className="button" onClick={saveSettings}>Save Keys Locally</button>
-            </div>
-            <p className="job-meta">Keys are stored in your local database for development. Do not commit `.env` or `jobgraph.db`.</p>
           </div>
         </section>
 
-        <section className="panel">
-          <h3>Ingestion History</h3>
-          <div className="tracker-list">
-            {runs.length === 0 && <p className="job-meta">No ingestion runs yet.</p>}
-            {runs.map((run) => (
-              <div className="tracker-item" key={run.id}>
-                <strong>{run.status.toUpperCase()} | {run.jobs_saved} jobs saved</strong>
-                <div className="job-meta">{run.query} | {run.location} | {run.sources.join(", ")}</div>
-                {run.error && <div className="error-line">{run.error}</div>}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="matches" className="grid">
+        <section id="matches" className="content-grid">
           <div className="panel">
-            <h3>Ranked Job Feed</h3>
+            <h3>Best matches</h3>
             <div className="feed">
               {matches.map((match) => (
                 <button
@@ -301,8 +278,8 @@ export default function Home() {
                     <span className="score">{match.score}%</span>
                   </div>
                   <div className="tags">
-                    {match.matched_skills.slice(0, 5).map((skill) => <span className="tag" key={skill}>{skill}</span>)}
-                    {match.missing_skills.slice(0, 3).map((skill) => <span className="tag missing" key={skill}>{skill}</span>)}
+                    {match.matched_skills.slice(0, 4).map((skill) => <span className="tag" key={skill}>{skill}</span>)}
+                    {match.missing_skills.slice(0, 2).map((skill) => <span className="tag missing" key={skill}>{skill}</span>)}
                   </div>
                 </button>
               ))}
@@ -317,52 +294,83 @@ export default function Home() {
                     <h3>{selected.job.title}</h3>
                     <div className="job-meta">{selected.job.company} | {selected.job.location} | {selected.job.work_model}</div>
                   </div>
-                  <span className="score">{selected.score}% match</span>
+                  <span className="score">{selected.score}%</span>
                 </div>
                 <p className="detail-copy">{selected.explanation}</p>
                 <div className="split">
                   <div>
-                    <h4>Matched Skills</h4>
+                    <h4>Strengths</h4>
                     <div className="tags">{selected.matched_skills.map((skill) => <span className="tag" key={skill}>{skill}</span>)}</div>
                   </div>
                   <div>
-                    <h4>Skill Gaps</h4>
+                    <h4>Gaps</h4>
                     <div className="tags">{selected.missing_skills.map((skill) => <span className="tag missing" key={skill}>{skill}</span>)}</div>
                   </div>
                 </div>
                 <div className="actions">
-                  <button className="button" onClick={() => runAgent(`tailor resume for ${selected.job.job_id}`)}>Tailor Resume</button>
-                  <button className="button secondary" onClick={() => runAgent(`cover letter for ${selected.job.job_id}`)}>Cover Letter</button>
-                  <button className="button secondary" onClick={() => track("saved")}>Save</button>
-                  <button className="button secondary" onClick={() => track("applied")}>Mark Applied</button>
+                  <button className="button" onClick={() => runAgent(`tailor resume for ${selected.job.job_id}`)}>Tailor resume</button>
+                  <button className="button secondary" onClick={() => runAgent(`cover letter for ${selected.job.job_id}`)}>Cover letter</button>
+                  <button className="button ghost" onClick={() => track("saved")}>Save</button>
+                  <button className="button ghost" onClick={() => track("applied")}>Applied</button>
                 </div>
               </>
             ) : (
-              <p>No matches loaded.</p>
+              <p className="muted">No matches loaded.</p>
             )}
+          </div>
+
+          <div className="side-stack">
+            <div id="copilot" className="panel">
+              <h3>Orion-style copilot</h3>
+              <textarea className="textarea" value={agentPrompt} onChange={(event) => setAgentPrompt(event.target.value)} />
+              <div className="actions">
+                <button className="button" onClick={() => runAgent()}>Ask</button>
+                {selected && <button className="button secondary" onClick={() => runAgent(`explain ${selected.job.job_id}`)}>Explain job</button>}
+              </div>
+              <pre className="output">{agentOutput ? JSON.stringify(agentOutput, null, 2) : "Copilot output appears here."}</pre>
+            </div>
+
+            <div id="tracker" className="panel">
+              <h3>Tracker</h3>
+              <div className="tracker-list">
+                {applications.length === 0 && <p className="job-meta">No applications tracked yet.</p>}
+                {applications.slice(0, 6).map((item, index) => (
+                  <div className="tracker-item" key={`${item.job_id}-${item.timestamp}-${index}`}>
+                    <strong>{item.status.toUpperCase()}</strong>
+                    <div className="job-meta">{item.note || item.job_id}</div>
+                    <div className="job-meta">{new Date(item.timestamp).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
-        <section className="grid">
-          <div id="copilot" className="panel">
-            <h3>Agentic Copilot</h3>
-            <textarea className="textarea" value={agentPrompt} onChange={(event) => setAgentPrompt(event.target.value)} />
-            <div className="actions" style={{ marginTop: 10 }}>
-              <button className="button" onClick={() => runAgent()}>Run Agent</button>
-              {selected && <button className="button secondary" onClick={() => runAgent(`explain ${selected.job.job_id}`)}>Explain Selected</button>}
+        <section id="settings" className="hero">
+          <div className="panel">
+            <h3>Job source settings</h3>
+            <div className="form-grid">
+              <input className="input" placeholder="Adzuna app id" value={settings.adzuna_app_id} onChange={(e) => setSettings({ ...settings, adzuna_app_id: e.target.value })} />
+              <input className="input" placeholder="Adzuna app key" type="password" value={settings.adzuna_app_key} onChange={(e) => setSettings({ ...settings, adzuna_app_key: e.target.value })} />
+              <input className="input" placeholder="USAJOBS user agent email" value={settings.usajobs_user_agent} onChange={(e) => setSettings({ ...settings, usajobs_user_agent: e.target.value })} />
+              <input className="input" placeholder="USAJOBS API key" type="password" value={settings.usajobs_api_key} onChange={(e) => setSettings({ ...settings, usajobs_api_key: e.target.value })} />
+              <input className="input full" placeholder="JSearch RapidAPI key" type="password" value={settings.jsearch_api_key} onChange={(e) => setSettings({ ...settings, jsearch_api_key: e.target.value })} />
             </div>
-            <pre className="output">{agentOutput ? JSON.stringify(agentOutput, null, 2) : "Agent output will appear here."}</pre>
+            <div className="actions">
+              <button className="button" onClick={saveSettings}>Save keys locally</button>
+              <button className="button secondary" onClick={() => runAgent("prepare autofill")}>Prepare autofill</button>
+            </div>
           </div>
 
-          <div id="tracker" className="panel">
-            <h3>Application Tracker</h3>
+          <div className="panel">
+            <h3>Ingestion history</h3>
             <div className="tracker-list">
-              {applications.length === 0 && <p className="job-meta">No applications tracked yet.</p>}
-              {applications.slice(0, 8).map((item, index) => (
-                <div className="tracker-item" key={`${item.job_id}-${item.timestamp}-${index}`}>
-                  <strong>{item.status.toUpperCase()}</strong>
-                  <div className="job-meta">{item.note || item.job_id}</div>
-                  <div className="job-meta">{new Date(item.timestamp).toLocaleString()}</div>
+              {runs.length === 0 && <p className="job-meta">No ingestion runs yet.</p>}
+              {runs.map((run) => (
+                <div className="tracker-item" key={run.id}>
+                  <strong>{run.status.toUpperCase()} | {run.jobs_saved} saved</strong>
+                  <div className="job-meta">{run.query} | {run.location} | {run.sources.join(", ")}</div>
+                  {run.error && <div className="error-line">{run.error}</div>}
                 </div>
               ))}
             </div>
@@ -370,13 +378,12 @@ export default function Home() {
         </section>
 
         <section id="autofill" className="panel">
-          <h3>Human-Reviewed Autofill</h3>
+          <h3>Autofill extension</h3>
           <p className="detail-copy">
-            Load the Chrome extension from <strong>apps/extension</strong>, point it at <strong>{API}</strong>, and use it to fill detected ATS fields.
-            The extension fills fields for review and does not submit applications.
+            Load <strong>apps/extension</strong>, point it at <strong>{API}</strong>, and review all filled fields before submitting.
           </p>
         </section>
-      </main>
+      </div>
     </div>
   );
 }
