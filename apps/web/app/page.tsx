@@ -75,7 +75,10 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`POST ${path} failed`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `POST ${path} failed`);
+  }
   return response.json();
 }
 
@@ -85,7 +88,19 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`PUT ${path} failed`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `PUT ${path} failed`);
+  }
+  return response.json();
+}
+
+async function apiDelete<T>(path: string): Promise<T> {
+  const response = await fetch(`${API}${path}`, { method: "DELETE" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `DELETE ${path} failed`);
+  }
   return response.json();
 }
 
@@ -153,6 +168,19 @@ export default function Home() {
     setAgentOutput({ intent: "save_integrations", result: status });
   }
 
+  async function clearSettings() {
+    const status = await apiDelete<IntegrationStatus>("/settings/integrations");
+    setSettings({
+      adzuna_app_id: "",
+      adzuna_app_key: "",
+      usajobs_user_agent: "",
+      usajobs_api_key: "",
+      jsearch_api_key: "",
+    });
+    setIntegrations(status);
+    setAgentOutput({ intent: "clear_integrations", result: status });
+  }
+
   async function ingestJobs() {
     setIngesting(true);
     try {
@@ -166,7 +194,12 @@ export default function Home() {
       setAgentOutput({ intent: "ingest_jobs", result: output });
       await refresh();
     } catch (error) {
-      setAgentOutput({ intent: "ingest_jobs", error: String(error) });
+      setAgentOutput({
+        intent: "ingest_jobs",
+        error: String(error),
+        hint: "If you saved test or invalid API keys, clear the fields and save settings again, or use valid Adzuna/USAJOBS credentials.",
+      });
+      await refresh();
     } finally {
       setIngesting(false);
     }
@@ -358,6 +391,7 @@ export default function Home() {
             </div>
             <div className="actions">
               <button className="button" onClick={saveSettings}>Save keys locally</button>
+              <button className="button ghost" onClick={clearSettings}>Clear keys</button>
               <button className="button secondary" onClick={() => runAgent("prepare autofill")}>Prepare autofill</button>
             </div>
           </div>

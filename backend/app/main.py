@@ -75,6 +75,11 @@ def save_integration_settings(settings: IntegrationSettings) -> Dict[str, Any]:
     return store.save_integration_settings(settings).model_dump()
 
 
+@app.delete("/settings/integrations")
+def clear_integration_settings() -> Dict[str, Any]:
+    return store.save_integration_settings(IntegrationSettings()).model_dump()
+
+
 @app.get("/jobs")
 def list_jobs() -> List[Dict[str, Any]]:
     return [job.model_dump() for job in store.list_jobs()]
