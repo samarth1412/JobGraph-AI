@@ -21,8 +21,10 @@ class JobSearchAgent:
             "find_best_jobs": tools.find_best_jobs,
             "explain_match": tools.explain_match,
             "tailor_resume": tools.tailor_resume,
+            "analyze_keyword_gaps": tools.analyze_keyword_gaps,
             "generate_cover_letter": tools.generate_cover_letter,
             "prepare_autofill_profile": tools.prepare_autofill_profile,
+            "prepare_application": tools.prepare_application,
         }
 
     def run(self, message: str) -> dict:
@@ -50,11 +52,21 @@ class JobSearchAgent:
         lowered = message.lower()
         job_id = _extract_job_id(message)
 
-        if "autofill" in lowered or "apply" in lowered:
-            steps = [AgentStep("prepare_autofill_profile", {"candidate_id": self.candidate_id}, "Prepare structured profile for browser autofill.")]
-            if job_id:
-                steps.insert(0, AgentStep("explain_match", {"candidate_id": self.candidate_id, "job_id": job_id}, "Check fit before applying."))
-            return steps
+        if job_id and ("keyword" in lowered or "missing" in lowered or "gap" in lowered):
+            return [
+                AgentStep("explain_match", {"candidate_id": self.candidate_id, "job_id": job_id}, "Extract matched and missing job signals."),
+                AgentStep("analyze_keyword_gaps", {"candidate_id": self.candidate_id, "job_id": job_id}, "Recommend truthful resume keyword improvements."),
+            ]
+
+        if job_id and (_has_command_word(lowered, "apply") or "autofill" in lowered):
+            return [
+                AgentStep("explain_match", {"candidate_id": self.candidate_id, "job_id": job_id}, "Check fit before applying."),
+                AgentStep("tailor_resume", {"candidate_id": self.candidate_id, "job_id": job_id}, "Prepare resume targeting guidance."),
+                AgentStep("prepare_application", {"candidate_id": self.candidate_id, "job_id": job_id}, "Prepare autofill payload and apply portal handoff."),
+            ]
+
+        if "autofill" in lowered:
+            return [AgentStep("prepare_autofill_profile", {"candidate_id": self.candidate_id}, "Prepare structured profile for browser autofill.")]
 
         if job_id and ("cover" in lowered or "letter" in lowered):
             return [
@@ -79,8 +91,12 @@ class JobSearchAgent:
 
 
 def _extract_job_id(message: str) -> Optional[str]:
-    match = re.search(r"(?:demo|adzuna|usajobs|jsearch)_[a-z0-9]{12}|job_[a-z0-9_]+", message)
+    match = re.search(r"(?:demo|adzuna|usajobs|jsearch|job)_[a-z0-9_:-]+", message, flags=re.I)
     return match.group(0) if match else None
+
+
+def _has_command_word(message: str, word: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(word)}\b", message))
 
 
 def _intent_from_plan(plan: List[AgentStep]) -> str:

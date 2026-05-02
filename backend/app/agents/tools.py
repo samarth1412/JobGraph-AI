@@ -25,6 +25,25 @@ def tailor_resume(candidate_id: str, job_id: str) -> dict:
     return {"job_id": job_id, "resume_strategy": bullets, "ats_keywords": match["matched_skills"] + missing[:8]}
 
 
+def analyze_keyword_gaps(candidate_id: str, job_id: str) -> dict:
+    match = explain_match(candidate_id, job_id)
+    missing = match["missing_skills"]
+    matched = match["matched_skills"]
+    recommendations = [
+        f"Add a truthful resume bullet or project detail that demonstrates {skill}."
+        for skill in missing[:8]
+    ]
+    if not recommendations:
+        recommendations = ["Your resume already covers the extracted keywords for this posting. Focus on stronger impact metrics."]
+    return {
+        "job_id": job_id,
+        "matched_keywords": matched,
+        "missing_keywords": missing,
+        "recommendations": recommendations,
+        "fit_explanation": match["explanation"],
+    }
+
+
 def generate_cover_letter(candidate_id: str, job_id: str) -> dict:
     candidate = store.get_candidate(candidate_id)
     job = store.get_job(job_id)
@@ -35,6 +54,23 @@ def generate_cover_letter(candidate_id: str, job_id: str) -> dict:
 
 def prepare_autofill_profile(candidate_id: str = "default") -> dict:
     return store.get_autofill(candidate_id).model_dump()
+
+
+def prepare_application(candidate_id: str, job_id: str) -> dict:
+    job = store.get_job(job_id)
+    profile = store.get_autofill(candidate_id)
+    resume_strategy = tailor_resume(candidate_id, job_id)
+    return {
+        "job_id": job_id,
+        "title": job.title,
+        "company": job.company,
+        "apply_url": job.apply_url,
+        "can_open_apply_portal": bool(job.apply_url),
+        "autofill_profile": profile.model_dump(),
+        "resume_strategy": resume_strategy,
+        "human_review_required": True,
+        "next_step": "Open the apply URL, then use the JobGraph Chrome extension to fill fields from this profile.",
+    }
 
 
 def track_application(candidate_id: str, job_id: str, status: str, note: str = "") -> dict:

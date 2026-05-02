@@ -30,3 +30,28 @@ def test_copilot_find_best_jobs_prefers_live_jobs_when_available():
     sources = {match["job"]["source"] for match in output["result"]["matches"]}
 
     assert sources == {"adzuna"}
+
+
+def test_copilot_keyword_gap_and_apply_plans():
+    init_db()
+    store.upsert_jobs(
+        [
+            Job(
+                job_id="adzuna_apply_test",
+                source="adzuna",
+                title="Machine Learning Engineer",
+                company="Live",
+                required_skills=["Python", "PyTorch", "MLflow"],
+                apply_url="https://provider.example/apply",
+            )
+        ]
+    )
+
+    keyword_output = run_copilot("default", "what keywords am I missing for adzuna_apply_test")
+    apply_output = run_copilot("default", "apply to adzuna_apply_test")
+
+    assert keyword_output["plan"][-1]["tool"] == "analyze_keyword_gaps"
+    assert "missing_keywords" in keyword_output["result"]
+    assert apply_output["plan"][-1]["tool"] == "prepare_application"
+    assert apply_output["result"]["can_open_apply_portal"] is True
+    assert apply_output["result"]["human_review_required"] is True

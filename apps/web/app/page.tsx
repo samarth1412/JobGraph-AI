@@ -32,23 +32,34 @@ type Metrics = {
   applications_total: number;
   ingestion_runs_total: number;
   jobs_by_source: Record<string, number>;
+  model: string;
 };
 
-type ApplicationEvent = {
-  candidate_id: string;
-  job_id: string;
-  status: string;
-  note: string;
-  timestamp: string;
+type GnnSnapshot = {
+  diagnostics: {
+    nodes: number;
+    edges: number;
+    model: string;
+  };
 };
 
-type IngestionRun = {
-  id: number;
-  query: string;
-  location: string;
-  sources: string[];
-  jobs_saved: number;
-  status: string;
+type AgentOutput = {
+  agent?: string;
+  intent?: string;
+  plan?: Array<{ tool: string; status: string; reason?: string }>;
+  result?: {
+    explanation?: string;
+    matched_skills?: string[];
+    missing_skills?: string[];
+    score?: number;
+    job?: Job;
+    apply_url?: string;
+    resume_strategy?: {
+      resume_strategy?: string[];
+      ats_keywords?: string[];
+    };
+  };
+  error?: string;
 };
 
 async function apiGet<T>(path: string): Promise<T> {
@@ -67,72 +78,46 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return response.json();
 }
 
-const tabs = ["Recommended", "Liked", "Applied", "External"];
-const nav = ["Jobs", "Resume", "Profile", "Agent", "Coaching", "Interview"];
-const filters = ["United States", "Machine Learning Engineer", "Intern/New Grad", "Full-time", "Remote", "Past week", "0-1 Years", "Industry"];
+function formatPay(job: Job) {
+  if (!job.salary_min && !job.salary_max) return "";
+  if (job.salary_min && job.salary_max && job.salary_min !== job.salary_max) {
+    return `$${Math.round(job.salary_min).toLocaleString()} - $${Math.round(job.salary_max).toLocaleString()}`;
+  }
+  return `$${Math.round(job.salary_min || job.salary_max || 0).toLocaleString()}`;
+}
 
-function sourceLabel(source: string) {
+function sourceName(source: string) {
   return source === "demo" ? "Demo" : source.toUpperCase();
-}
-
-function scoreLabel(score: number) {
-  if (score >= 75) return "STRONG MATCH";
-  if (score >= 55) return "GOOD MATCH";
-  return "FAIR MATCH";
-}
-
-function companyMark(company: string) {
-  return company
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
 }
 
 export default function Home() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [applications, setApplications] = useState<ApplicationEvent[]>([]);
-  const [runs, setRuns] = useState<IngestionRun[]>([]);
+  const [gnn, setGnn] = useState<GnnSnapshot | null>(null);
   const [query, setQuery] = useState("machine learning engineer new grad");
   const [location, setLocation] = useState("United States");
-  const [resumeUploading, setResumeUploading] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [department, setDepartment] = useState("All");
   const [searching, setSearching] = useState(false);
-  const [agentOutput, setAgentOutput] = useState<unknown>(null);
-
-  async function loadDashboard() {
-    const [matchData, metricData, applicationData, runData] = await Promise.all([
-      apiGet<{ matches: Match[] }>("/matches/default?k=30"),
-      apiGet<Metrics>("/mlops/metrics"),
-      apiGet<ApplicationEvent[]>("/applications/default"),
-      apiGet<IngestionRun[]>("/jobs/ingestion-runs?limit=6"),
-    ]);
-    return { matchData, metricData, applicationData, runData };
-  }
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [resumeLoaded, setResumeLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
+  const [agentOutput, setAgentOutput] = useState<AgentOutput | null>(null);
 
   async function refresh() {
     setLoading(true);
     try {
-      let data = await loadDashboard();
-      if (!data.matchData.matches?.length) {
-        await apiPost("/jobs/ingest", {
-          query,
-          location,
-          page: 1,
-          results_per_page: 25,
-          sources: [],
-        });
-        data = await loadDashboard();
-      }
-      setMatches(data.matchData.matches || []);
-      setMetrics(data.metricData);
-      setApplications(data.applicationData);
-      setRuns(data.runData);
+      const [matchData, metricData, gnnData] = await Promise.all([
+        apiGet<{ matches: Match[] }>("/matches/default?k=50"),
+        apiGet<Metrics>("/mlops/metrics"),
+        apiGet<GnnSnapshot>("/gnn/default?k=5"),
+      ]);
+      setMatches(matchData.matches || []);
+      setSelectedMatch((current) => current || matchData.matches?.[0] || null);
+      setMetrics(metricData);
+      setGnn(gnnData);
     } catch (error) {
-      setAgentOutput({ error: String(error), api: API });
+      setAgentOutput({ error: `${String(error)} API: ${API}` });
     } finally {
       setLoading(false);
     }
@@ -142,53 +127,71 @@ export default function Home() {
     refresh();
   }, []);
 
-  const appliedIds = useMemo(() => new Set(applications.map((item) => item.job_id)), [applications]);
-  const sourceSummary = useMemo(() => Object.entries(metrics?.jobs_by_source || {}), [metrics]);
+  const departments = useMemo(() => {
+    const inferred = matches.map((match) => {
+      const title = match.job.title.toLowerCase();
+      if (title.includes("data")) return "Data";
+      if (title.includes("machine learning") || title.includes("ai")) return "AI / ML";
+      if (title.includes("engineer")) return "Engineering";
+      return "Other";
+    });
+    return ["All", ...Array.from(new Set(inferred))];
+  }, [matches]);
+
+  const filteredMatches = useMemo(() => {
+    return matches.filter((match) => {
+      if (department === "All") return true;
+      const title = match.job.title.toLowerCase();
+      if (department === "AI / ML") return title.includes("machine learning") || title.includes("ai");
+      if (department === "Engineering") return title.includes("engineer");
+      if (department === "Data") return title.includes("data");
+      return true;
+    });
+  }, [department, matches]);
 
   async function searchJobs() {
     setSearching(true);
     try {
-      const result = await apiPost("/jobs/ingest", {
+      await apiPost("/jobs/ingest", {
         query,
         location,
         page: 1,
         results_per_page: 25,
         sources: ["adzuna", "usajobs", "jsearch"],
       });
-      setAgentOutput({ intent: "search_jobs", result });
       await refresh();
     } finally {
       setSearching(false);
     }
   }
 
-  async function runAgent(match: Match) {
-    const output = await apiPost("/agent", {
+  async function askAgent(match: Match) {
+    setSelectedMatch(match);
+    const output = await apiPost<AgentOutput>("/agent", {
       candidate_id: "default",
       message: `explain ${match.job.job_id}`,
     });
     setAgentOutput(output);
   }
 
-  async function track(match: Match, status: string) {
-    await apiPost("/applications", {
+  async function askKeywordGaps(match: Match) {
+    setSelectedMatch(match);
+    const output = await apiPost<AgentOutput>("/agent", {
       candidate_id: "default",
-      job_id: match.job.job_id,
-      status,
-      note: `${match.job.title} at ${match.job.company}`,
+      message: `what keywords am I missing for ${match.job.job_id}`,
     });
-    await refresh();
+    setAgentOutput(output);
   }
 
-  async function applyWithAutofill(match: Match) {
-    if (match.job.apply_url) {
-      await track(match, "applied");
-      window.open(match.job.apply_url, "_blank", "noopener,noreferrer");
-    } else {
-      setAgentOutput({
-        intent: "apply_with_autofill",
-        result: "This is a demo or provider result without an external apply URL. Add valid job API keys and run Search jobs for real company portal links.",
-      });
+  async function prepareApply(match: Match) {
+    setSelectedMatch(match);
+    const output = await apiPost<AgentOutput>("/agent", {
+      candidate_id: "default",
+      message: `apply to ${match.job.job_id}`,
+    });
+    setAgentOutput(output);
+    if (output.result?.apply_url) {
+      window.open(output.result.apply_url, "_blank", "noopener,noreferrer");
     }
   }
 
@@ -204,168 +207,240 @@ export default function Home() {
       });
       if (!response.ok) throw new Error((await response.text()) || "Resume upload failed");
       const profile = await response.json();
-      setAgentOutput({ intent: "resume_upload", result: profile });
+      setResumeLoaded(true);
+      setAgentOutput({
+        intent: "resume_uploaded",
+        result: {
+          explanation: `Resume parsed for ${profile.name || "candidate"}. Extracted ${profile.skills?.length || 0} skills; job rankings now use this profile.`,
+          matched_skills: profile.skills || [],
+          missing_skills: [],
+        },
+      });
       await refresh();
     } catch (error) {
-      setAgentOutput({ intent: "resume_upload", error: String(error) });
+      setAgentOutput({ error: String(error) });
     } finally {
       setResumeUploading(false);
     }
   }
 
+  async function apply(match: Match) {
+    if (!match.job.apply_url) {
+      setAgentOutput({
+        intent: "apply",
+        result: { explanation: "This posting does not include a real apply URL. Run a live search with configured providers." },
+      });
+      return;
+    }
+    await prepareApply(match);
+  }
+
   return (
-    <main className="appShell">
-      <aside className="leftNav">
-        <div className="brand">
-          <div className="brandIcon">JG</div>
-          <strong>JobGraph</strong>
-        </div>
-
+    <main className="page">
+      <header className="siteHeader">
+        <a className="wordmark" href="#">
+          JobGraph AI
+        </a>
         <nav>
-          {nav.map((item) => (
-            <a className={item === "Jobs" ? "active" : ""} href="#" key={item}>
-              <span>{item === "Jobs" ? "▣" : "○"}</span>
-              {item}
-              {item === "Interview" && <em>NEW</em>}
-            </a>
-          ))}
+          <a href="#openings">Open roles</a>
+          <a href="#agent">Agent</a>
+          <a href="#graph">Graph model</a>
         </nav>
+      </header>
 
-        <div className="referBox">
-          <strong>Resume Autofill</strong>
-          <span>Upload your resume so the extension can fill job portals with your profile.</span>
-          <label className="resumeUpload">
-            {resumeUploading ? "Uploading..." : "Upload resume"}
-            <input type="file" accept=".pdf,.txt" onChange={(event) => uploadResume(event.target.files?.[0] || null)} />
-          </label>
+      <section className="hero">
+        <div>
+          <p className="eyebrow">Real-time AI job search</p>
+          <h1>Open roles matched to your profile.</h1>
+          <p>
+            Search live job sources, rank openings with GraphSAGE-style matching, and apply through the original company or provider portal.
+          </p>
         </div>
-
-        <div className="navBottom">
-          <a href="#messages">Messages</a>
-          <a href="#feedback">Feedback</a>
-          <a href="#settings">Settings</a>
+        <div className="heroAside">
+          <span>Active agent</span>
+          <strong>{agentOutput?.agent || "jobgraph_react_tool_agent_v2"}</strong>
+          <p>{gnn?.diagnostics.model || "local_graphsage_message_passing_v1"}</p>
         </div>
-      </aside>
+      </section>
 
-      <section className="feedShell">
-        <header className="feedTop">
-          <div className="titleRow">
-            <h1>JOBS</h1>
-            <span>›</span>
-            <nav className="tabs">
-              {tabs.map((tab) => (
-                <button className={tab === "Recommended" ? "selected" : ""} key={tab}>
-                  {tab}
-                  {tab !== "Recommended" && <b>{tab === "Applied" ? applications.length : 0}</b>}
-                </button>
-              ))}
-            </nav>
-          </div>
-          <label className="topSearch">
-            <span>⌕</span>
-            <input placeholder="Search by title or company" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </label>
-        </header>
+      <section className="workflow">
+        <div>
+          <span>1</span>
+          <strong>Upload resume</strong>
+          <p>Parse your resume into skills and autofill fields.</p>
+        </div>
+        <div>
+          <span>2</span>
+          <strong>Filter live jobs</strong>
+          <p>Rank openings with semantic and GraphSAGE signals.</p>
+        </div>
+        <div>
+          <span>3</span>
+          <strong>Ask agent</strong>
+          <p>Find missing keywords, tailor your resume, and prepare apply.</p>
+        </div>
+        <label className="uploadButton">
+          {resumeUploading ? "Uploading..." : resumeLoaded ? "Resume uploaded" : "Upload resume"}
+          <input type="file" accept=".pdf,.txt" onChange={(event) => uploadResume(event.target.files?.[0] || null)} />
+        </label>
+      </section>
 
-        <section className="filterBar">
-          <div className="chips">
-            {filters.map((filter, index) => (
-              <button className={index < 6 ? "chip activeChip" : "chip"} key={filter}>
-                {filter}
-                {index === 1 && <b>+20</b>}
-                {index === 2 && <b>+1</b>}
-                <span>⌄</span>
-              </button>
-            ))}
-            <button className="hiddenChip">▣ Hidden Jobs</button>
-            <button className="allFilters">••• All Filters</button>
-          </div>
-          <div className="rightSort">
-            <button>?</button>
-            <button>Recommended ⌄</button>
-          </div>
-        </section>
-
-        <section className="quickSearch">
+      <section className="controls" aria-label="Job search controls">
+        <label>
+          Search
+          <input value={query} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <label>
+          Location
           <input value={location} onChange={(event) => setLocation(event.target.value)} />
-          <button onClick={searchJobs} disabled={searching}>{searching ? "Searching" : "Search jobs"}</button>
-          <span>{loading ? "Loading jobs..." : `${matches.length} recommended jobs. Demo jobs are clearly labeled.`}</span>
-        </section>
+        </label>
+        <label>
+          Team
+          <select value={department} onChange={(event) => setDepartment(event.target.value)}>
+            {departments.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </select>
+        </label>
+        <button onClick={searchJobs} disabled={searching}>
+          {searching ? "Searching..." : "Search jobs"}
+        </button>
+      </section>
 
-        <section className="jobFeed">
-          {matches.map((match, index) => (
-            <article className="jobCard" key={match.job.job_id}>
-              <div className="jobMain">
-                <div className="companyLogo">{companyMark(match.job.company)}</div>
-                <div className="jobInfo">
-                  <div className="jobBadges">
-                    <span>{index < 2 ? "4 hours ago" : "9 minutes ago"}</span>
-                    {index === 0 && <span>Be an early applicant</span>}
-                  </div>
-                  <h2>{match.job.title}</h2>
-                  <p>
-                    <strong>{match.job.company}</strong>
-                    <span>/ {sourceLabel(match.job.source)} {match.job.apply_url ? "/ Live opening" : "/ Demo or no apply URL"}</span>
-                  </p>
-                  <div className="facts">
-                    <span>⌖ {match.job.location || "United States"}</span>
-                    <span>◴ Full-time</span>
-                    <span>⌂ {match.job.work_model || "Remote"}</span>
-                    <span>♔ New Grad</span>
-                    <span>$ {match.job.salary_min ? `${match.job.salary_min}/hr` : "Competitive"}</span>
-                  </div>
-                  <div className="cardFoot">
-                    <span>{index === 0 ? "Less than 25 applicants" : `${72 + index * 11} applicants`}</span>
-                    <div className="cardActions">
-                      <button aria-label="Hide job">⊘</button>
-                      <button aria-label="Like job">♡</button>
-                      <button className="orion" onClick={() => runAgent(match)}>✦ ASK ORION</button>
-                      <button className="apply" onClick={() => applyWithAutofill(match)}>
-                        {match.job.apply_url ? (appliedIds.has(match.job.job_id) ? "APPLIED" : "APPLY WITH AUTOFILL") : "NO REAL APPLY LINK"}
-                      </button>
+      <section className="summary" id="graph">
+        <div>
+          <span>Openings</span>
+          <strong>{loading ? "-" : filteredMatches.length}</strong>
+        </div>
+        <div>
+          <span>Sources</span>
+          <strong>{Object.keys(metrics?.jobs_by_source || {}).join(", ") || "-"}</strong>
+        </div>
+        <div>
+          <span>Graph</span>
+          <strong>{gnn ? `${gnn.diagnostics.nodes} nodes / ${gnn.diagnostics.edges} edges` : "-"}</strong>
+        </div>
+      </section>
+
+      <section className="contentGrid">
+        <section className="jobs" id="openings">
+          <div className="sectionTitle">
+            <h2>Current openings</h2>
+            <span>{metrics?.model || "GraphSAGE ranker"}</span>
+          </div>
+
+          <div className="jobList">
+            {filteredMatches.map((match) => {
+              const pay = formatPay(match.job);
+              return (
+                <article className={`jobRow ${selectedMatch?.job.job_id === match.job.job_id ? "selected" : ""}`} key={match.job.job_id}>
+                  <div className="jobCopy">
+                    <div className="metaLine">
+                      <span>{sourceName(match.job.source)}</span>
+                      {match.job.work_model && <span>{match.job.work_model}</span>}
+                      {pay && <span>{pay}</span>}
+                    </div>
+                    <h3>{match.job.title}</h3>
+                    <p>{match.job.company} · {match.job.location || "United States"}</p>
+                    <p className="description">{match.job.description}</p>
+                    <div className="skills">
+                      {match.matched_skills.slice(0, 5).map((skill) => (
+                        <span key={skill}>{skill}</span>
+                      ))}
                     </div>
                   </div>
-                </div>
+                  <aside className="jobActions">
+                    <div className="score">{Math.round(match.score)}%</div>
+                    <button onClick={() => setSelectedMatch(match)}>Details</button>
+                    <button onClick={() => askAgent(match)}>Explain</button>
+                    <button onClick={() => askKeywordGaps(match)}>Keywords</button>
+                    <button className="apply" onClick={() => apply(match)} disabled={!match.job.apply_url}>
+                      {match.job.apply_url ? "Prepare apply" : "No apply link"}
+                    </button>
+                  </aside>
+                </article>
+              );
+            })}
+            {!filteredMatches.length && (
+              <div className="empty">
+                <strong>{loading ? "Loading openings..." : "No openings found"}</strong>
+                <span>Run a live search or adjust filters.</span>
               </div>
-
-              <aside className="scorePanel">
-                <button aria-label="More">•••</button>
-                <div className="scoreCircle">{Math.round(match.score)}%</div>
-                <strong>{scoreLabel(match.score)}</strong>
-                <div className="scoreReasons">
-                  {match.matched_skills.slice(0, 3).map((skill) => (
-                    <span key={skill}>✓ {skill}</span>
-                  ))}
-                  {!match.matched_skills.length && <span>✓ Profile overlap</span>}
-                </div>
-              </aside>
-            </article>
-          ))}
-
-          {!matches.length && (
-            <div className="emptyState">
-              <strong>{loading ? "Loading recommendations..." : "No recommendations loaded"}</strong>
-              <span>API: {API}</span>
-              <button onClick={searchJobs}>Create demo recommendations</button>
-            </div>
-          )}
+            )}
+          </div>
         </section>
 
-        <aside className="orionDrawer">
-          <div>
-            <strong>Orion output</strong>
-            <span>{metrics?.jobs_total ?? 0} jobs / {metrics?.ingestion_runs_total ?? 0} searches</span>
+        <aside className="agentPanel" id="agent">
+          <div className="agentHeader">
+            <span>Agent workspace</span>
+            <h2>{selectedMatch?.job.title || "Select a role"}</h2>
+            {selectedMatch && <p>{selectedMatch.job.company} · {selectedMatch.job.location}</p>}
           </div>
-          <pre>{agentOutput ? JSON.stringify(agentOutput, null, 2) : "Ask Orion from any job card."}</pre>
-          <div className="sourceCounts">
-            {sourceSummary.map(([source, count]) => (
-              <span key={source}>{source}: {count}</span>
+
+          {selectedMatch && (
+            <div className="fitBlock">
+              <div>
+                <span>Match</span>
+                <strong>{Math.round(selectedMatch.score)}%</strong>
+              </div>
+              <div>
+                <span>Source</span>
+                <strong>{sourceName(selectedMatch.job.source)}</strong>
+              </div>
+            </div>
+          )}
+
+          <div className="agentTrace">
+            <h3>Plan</h3>
+            {(agentOutput?.plan || [
+              { tool: "select_job", status: selectedMatch ? "completed" : "waiting", reason: "Choose a role to inspect fit." },
+              { tool: "explain_match", status: "waiting", reason: "Run Ask agent to generate an evidence-backed explanation." },
+            ]).map((step, index) => (
+              <div className="traceStep" key={`${step.tool}-${index}`}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{step.tool.replaceAll("_", " ")}</strong>
+                  <p>{step.reason || step.status}</p>
+                </div>
+                <em>{step.status}</em>
+              </div>
             ))}
           </div>
-          <div className="recentRuns">
-            {runs.slice(0, 2).map((run) => (
-              <span key={run.id}>{run.status}: {run.jobs_saved} saved</span>
-            ))}
+
+          <div className="agentResult">
+            <h3>Reasoning</h3>
+            <p>{agentOutput?.result?.explanation || selectedMatch?.explanation || "Ask the agent to explain fit, gaps, and next actions."}</p>
+          </div>
+
+          {agentOutput?.result?.resume_strategy && (
+            <div className="agentResult">
+              <h3>Resume targeting</h3>
+              <ul>
+                {agentOutput.result.resume_strategy.resume_strategy?.slice(0, 4).map((item: string) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="skillColumns">
+            <div>
+              <h3>Strengths</h3>
+              {(agentOutput?.result?.matched_skills || selectedMatch?.matched_skills || []).slice(0, 5).map((skill) => (
+                <span key={skill}>{skill}</span>
+              ))}
+            </div>
+            <div>
+              <h3>Gaps</h3>
+              {(agentOutput?.result?.missing_skills || selectedMatch?.missing_skills || []).slice(0, 5).map((skill) => (
+                <span key={skill}>{skill}</span>
+              ))}
+            </div>
+          </div>
+
+          <div className="modelNote">
+            <strong>{gnn?.diagnostics.model || "local_graphsage_message_passing_v1"}</strong>
+            <span>{gnn ? `${gnn.diagnostics.nodes} nodes and ${gnn.diagnostics.edges} graph edges scored for this feed.` : "Hybrid semantic + GraphSAGE recommendation scoring."}</span>
           </div>
         </aside>
       </section>
