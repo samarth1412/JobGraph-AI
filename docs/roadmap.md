@@ -9,7 +9,7 @@
 
 ## Phase 2
 - SQLAlchemy persistence with SQLite locally and PostgreSQL through Docker Compose.
-- pgvector embeddings for semantic job/resume retrieval.
+- Hybrid semantic job/resume retrieval with TF-IDF now, pgvector embeddings next.
 - PyTorch Geometric heterogeneous GNN link prediction.
 - LangGraph planner around the existing tool layer.
 - MLflow experiment tracking.

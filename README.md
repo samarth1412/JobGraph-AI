@@ -12,11 +12,12 @@ JobGraph AI ingests real-time jobs, parses a candidate resume, builds a candidat
 - Resume PDF/text parsing into a structured candidate profile.
 - Skill extraction and normalized job schema.
 - Candidate-job-skill graph construction.
-- Match score, missing skills, and explainability.
+- Hybrid match score using skill graph overlap, semantic resume/job similarity, role intent, location fit, missing skills, and explainability.
 - Agentic copilot tools for search, compare, resume tailoring, cover letters, outreach, and tracker updates.
 - Human-in-the-loop Chrome extension autofill profile.
 - MLOps endpoints for ingestion, ranking, latency, and feedback metrics.
 - Persistent storage for jobs, candidates, applications, and autofill profiles using SQLAlchemy.
+- Next.js command-center dashboard for ranked jobs, job details, copilot output, tracker events, and autofill instructions.
 
 ## Quick Start
 

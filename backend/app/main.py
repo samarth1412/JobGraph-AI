@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from backend.app.agents.copilot import run_copilot
 from backend.app.ingestion.clients import JobIngestionClient
+from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.ranker import rank_jobs
 from backend.app.mlops.metrics import system_metrics
 from backend.app.resume.parser import extract_text_from_pdf, parse_resume_text
@@ -39,6 +40,11 @@ def list_jobs() -> List[Dict[str, Any]]:
     return [job.model_dump() for job in store.list_jobs()]
 
 
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str) -> Dict[str, Any]:
+    return store.get_job(job_id).model_dump()
+
+
 @app.post("/resume/upload")
 async def upload_resume(candidate_id: str = "default", file: UploadFile = File(...)) -> Dict[str, Any]:
     suffix = Path(file.filename or "resume.pdf").suffix
@@ -61,6 +67,12 @@ def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
     matches = rank_jobs(candidate, store.list_jobs(), k=k)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
+
+
+@app.get("/graph/{candidate_id}")
+def graph_snapshot(candidate_id: str = "default") -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    return build_graph_snapshot(candidate, store.list_jobs())
 
 
 @app.post("/agent")

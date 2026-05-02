@@ -8,3 +8,4 @@ def test_rank_jobs_prefers_skill_overlap():
     ranked = rank_jobs(candidate, jobs)
     assert ranked[0].job.job_id == "a"
     assert ranked[0].score > ranked[1].score
+    assert "semantic" in ranked[0].explanation.lower()
