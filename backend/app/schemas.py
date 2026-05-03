@@ -39,7 +39,7 @@ class SearchRequest(BaseModel):
     location: str = "United States"
     page: int = 1
     results_per_page: int = 25
-    sources: List[str] = Field(default_factory=lambda: ["adzuna", "usajobs"])
+    sources: List[str] = Field(default_factory=lambda: ["jobspy", "ashby", "greenhouse", "lever", "workday"])
 
 
 class IntegrationSettings(BaseModel):
@@ -55,6 +55,7 @@ class IntegrationStatus(BaseModel):
     usajobs_configured: bool = False
     jsearch_configured: bool = False
     usajobs_user_agent: str = ""
+    scraper_sources: List[str] = Field(default_factory=lambda: ["jobspy", "ashby", "greenhouse", "lever", "workday"])
 
 
 class IngestionRun(BaseModel):

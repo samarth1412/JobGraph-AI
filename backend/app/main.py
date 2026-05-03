@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import importlib.util
 from pathlib import Path
+import sys
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List
 
@@ -11,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.agents.copilot import run_copilot
 from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
+from backend.app.ingestion.sources import LEGACY_SOURCES, scraper_jobs
 from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.graphsage import graphsage_affinity_scores
 from backend.app.matching.ranker import rank_jobs
@@ -79,6 +82,25 @@ def ingestion_runs(limit: int = 10) -> List[Dict[str, Any]]:
     return [run.model_dump() for run in store.list_ingestion_runs(limit=limit)]
 
 
+@app.get("/jobs/scraper-status")
+def scraper_status() -> Dict[str, Any]:
+    from backend.app.core.config import get_settings
+
+    settings = get_settings()
+    return {
+        "jobspy_available": importlib.util.find_spec("jobspy") is not None,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "jobspy_requires": "Python 3.10+",
+        "sources": ["jobspy", "ashby", "greenhouse", "lever", "workday"],
+        "configured_ats": {
+            "ashby": [board.strip() for board in settings.ashby_job_boards.split(",") if board.strip()],
+            "greenhouse": [board.strip() for board in settings.greenhouse_boards.split(",") if board.strip()],
+            "lever": [company.strip() for company in settings.lever_companies.split(",") if company.strip()],
+            "workday": [board.strip() for board in settings.workday_boards.split(",") if board.strip()],
+        },
+    }
+
+
 @app.get("/settings/integrations")
 def integration_status() -> Dict[str, Any]:
     return store.get_integration_status().model_dump()
@@ -95,8 +117,17 @@ def clear_integration_settings() -> Dict[str, Any]:
 
 
 @app.get("/jobs")
-def list_jobs() -> List[Dict[str, Any]]:
-    return [job.model_dump() for job in store.list_jobs()]
+def list_jobs(include_legacy: bool = False) -> List[Dict[str, Any]]:
+    jobs = store.list_jobs()
+    if not include_legacy:
+        jobs = scraper_jobs(jobs)
+    return [job.model_dump() for job in jobs]
+
+
+@app.delete("/jobs/legacy")
+def delete_legacy_jobs() -> Dict[str, Any]:
+    deleted = store.delete_jobs_by_sources(sorted(LEGACY_SOURCES))
+    return {"deleted": deleted, "sources": sorted(LEGACY_SOURCES)}
 
 
 @app.get("/jobs/{job_id}")
@@ -121,18 +152,15 @@ def save_candidate(profile: CandidateProfile) -> Dict[str, Any]:
     return store.save_candidate(profile).model_dump()
 
 
+@app.get("/candidate/{candidate_id}")
+def get_candidate(candidate_id: str = "default") -> Dict[str, Any]:
+    return store.get_candidate(candidate_id).model_dump()
+
+
 @app.get("/matches/{candidate_id}")
 def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
-    jobs = store.list_jobs()
-    if not jobs:
-        jobs = JobIngestionClient(IntegrationSettings()).search(
-            SearchRequest(sources=[], query="machine learning engineer new grad", location="United States")
-        )
-        store.upsert_jobs(jobs)
-    live_jobs = [job for job in jobs if job.source != "demo"]
-    if live_jobs:
-        jobs = live_jobs
+    jobs = scraper_jobs(store.list_jobs())
     matches = rank_jobs(candidate, jobs, k=k)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
@@ -140,16 +168,13 @@ def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
 @app.get("/graph/{candidate_id}")
 def graph_snapshot(candidate_id: str = "default") -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
-    return build_graph_snapshot(candidate, store.list_jobs())
+    return build_graph_snapshot(candidate, scraper_jobs(store.list_jobs()))
 
 
 @app.get("/gnn/{candidate_id}")
 def gnn_snapshot(candidate_id: str = "default", k: int = 10) -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
-    jobs = store.list_jobs()
-    live_jobs = [job for job in jobs if job.source != "demo"]
-    if live_jobs:
-        jobs = live_jobs
+    jobs = scraper_jobs(store.list_jobs())
     scores, diagnostics = graphsage_affinity_scores(candidate, jobs)
     ranked = sorted(zip(jobs, scores), key=lambda item: item[1], reverse=True)[:k]
     return {

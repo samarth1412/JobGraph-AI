@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.app.agents import tools
+from backend.app.services import store
 
 
 @dataclass
@@ -91,8 +92,14 @@ class JobSearchAgent:
 
 
 def _extract_job_id(message: str) -> Optional[str]:
-    match = re.search(r"(?:demo|adzuna|usajobs|jsearch|job)_[a-z0-9_:-]+", message, flags=re.I)
-    return match.group(0) if match else None
+    match = re.search(r"(?:demo|adzuna|usajobs|jsearch|jobspy_[a-z0-9]+|ashby|greenhouse|lever|workday|job)_[a-z0-9_:-]+", message, flags=re.I)
+    if match:
+        return match.group(0)
+    lowered = message.lower()
+    for job in store.list_jobs():
+        if job.job_id.lower() in lowered:
+            return job.job_id
+    return None
 
 
 def _has_command_word(message: str, word: str) -> bool:

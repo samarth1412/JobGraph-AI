@@ -8,7 +8,7 @@ JobGraph AI ingests real-time jobs, parses a candidate resume, builds a candidat
 
 ## Core Capabilities
 
-- Real-time job ingestion from Adzuna, USAJOBS, and optional JSearch.
+- ApplyPilot-style job discovery from JobSpy job boards plus public ATS/company portals.
 - Dashboard controls for saving local API credentials, selecting job sources, running ingestion, and reviewing ingestion history.
 - Resume PDF/text parsing into a structured candidate profile.
 - Skill extraction and normalized job schema.
@@ -30,6 +30,8 @@ pip install -r backend/requirements.txt
 uvicorn backend.app.main:app --reload --port 8022
 ```
 
+Use Python 3.10+ for the full scraper pipeline. `python-jobspy` does not install on Python 3.8.
+
 Optional web app:
 
 ```bash
@@ -49,11 +51,28 @@ USAJOBS_USER_AGENT=your_email@example.com
 USAJOBS_API_KEY=
 JSEARCH_API_KEY=
 OPENAI_API_KEY=
+JOBSPY_SITES=indeed,linkedin,zip_recruiter,google
+JOBSPY_HOURS_OLD=168
+JOBSPY_COUNTRY=USA
+ASHBY_JOB_BOARDS=Ashby
+GREENHOUSE_BOARDS=
+LEVER_COMPANIES=
+WORKDAY_BOARDS=
 DATABASE_URL=sqlite:///./jobgraph.db
 ```
 
-The app runs without keys using local demo data, but real-time ingestion requires API credentials.
-The dashboard stores development API credentials in the local database and only returns configured/not-configured status to the UI.
+The resume-first web flow no longer uses Adzuna or USAJOBS by default. It calls `jobspy`, `ashby`, `greenhouse`, `lever`, and `workday`.
+
+ATS configuration examples:
+
+```text
+ASHBY_JOB_BOARDS=Ashby,OpenAI
+GREENHOUSE_BOARDS=airbnb,stripe
+LEVER_COMPANIES=netflix,figma
+WORKDAY_BOARDS=company|External|https://company.wd1.myworkdayjobs.com
+```
+
+Demo jobs are now explicit-only via `sources=["demo"]`; failed live searches do not silently become fake jobs.
 
 For PostgreSQL, set:
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
@@ -107,6 +107,13 @@ def save_jobs(session: Session, jobs: List[Job]) -> List[Job]:
 
 def list_jobs(session: Session) -> List[Job]:
     return [record_to_job(row) for row in session.scalars(select(JobRecord).order_by(JobRecord.title)).all()]
+
+
+def delete_jobs_by_sources(session: Session, sources: List[str]) -> int:
+    if not sources:
+        return 0
+    result = session.execute(delete(JobRecord).where(JobRecord.source.in_(sources)))
+    return int(result.rowcount or 0)
 
 
 def get_job(session: Session, job_id: str) -> Job:

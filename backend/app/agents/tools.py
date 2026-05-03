@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from backend.app.matching.ranker import rank_jobs
+from backend.app.ingestion.sources import scraper_jobs
 from backend.app.schemas import ApplicationEvent
 from backend.app.services import store
 
@@ -81,5 +82,5 @@ def track_application(candidate_id: str, job_id: str, status: str, note: str = "
 
 def _live_preferred_jobs():
     jobs = store.list_jobs()
-    live_jobs = [job for job in jobs if job.source != "demo"]
-    return live_jobs or jobs
+    active_jobs = scraper_jobs(jobs)
+    return active_jobs

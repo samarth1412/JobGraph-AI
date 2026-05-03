@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
+const SCRAPER_SOURCES = ["jobspy", "ashby", "greenhouse", "lever", "workday"];
 
 type Job = {
   job_id: string;
@@ -18,6 +19,16 @@ type Job = {
   required_skills: string[];
 };
 
+type Candidate = {
+  candidate_id: string;
+  name: string;
+  email: string;
+  phone: string;
+  target_roles: string[];
+  skills: string[];
+  links: Record<string, string>;
+};
+
 type Match = {
   job: Job;
   score: number;
@@ -29,9 +40,11 @@ type Match = {
 
 type Metrics = {
   jobs_total: number;
+  jobs_total_all?: number;
   applications_total: number;
   ingestion_runs_total: number;
   jobs_by_source: Record<string, number>;
+  jobs_by_source_all?: Record<string, number>;
   model: string;
 };
 
@@ -43,6 +56,12 @@ type GnnSnapshot = {
   };
 };
 
+type ScraperStatus = {
+  jobspy_available: boolean;
+  python_version: string;
+  sources: string[];
+};
+
 type AgentOutput = {
   agent?: string;
   intent?: string;
@@ -51,8 +70,6 @@ type AgentOutput = {
     explanation?: string;
     matched_skills?: string[];
     missing_skills?: string[];
-    score?: number;
-    job?: Job;
     apply_url?: string;
     resume_strategy?: {
       resume_strategy?: string[];
@@ -87,35 +104,52 @@ function formatPay(job: Job) {
 }
 
 function sourceName(source: string) {
-  return source === "demo" ? "Demo" : source.toUpperCase();
+  if (source.startsWith("jobspy_")) return source.replace("jobspy_", "").replaceAll("_", " ").toUpperCase();
+  return source.toUpperCase();
+}
+
+function uniqueSources(metrics: Metrics | null) {
+  return Object.keys(metrics?.jobs_by_source || {});
 }
 
 export default function Home() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [gnn, setGnn] = useState<GnnSnapshot | null>(null);
+  const [status, setStatus] = useState<ScraperStatus | null>(null);
+  const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [query, setQuery] = useState("machine learning engineer new grad");
   const [location, setLocation] = useState("United States");
   const [department, setDepartment] = useState("All");
   const [searching, setSearching] = useState(false);
   const [resumeUploading, setResumeUploading] = useState(false);
   const [resumeLoaded, setResumeLoaded] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [agentOutput, setAgentOutput] = useState<AgentOutput | null>(null);
 
-  async function refresh() {
+  async function loadCandidate() {
+    const profile = await apiGet<Candidate>("/candidate/default");
+    if (profile.skills?.length || profile.email || profile.name) {
+      setCandidate(profile);
+      setQuery(profile.target_roles?.[0] || query);
+    }
+  }
+
+  async function refreshJobs() {
     setLoading(true);
     try {
-      const [matchData, metricData, gnnData] = await Promise.all([
+      const [matchData, metricData, gnnData, statusData] = await Promise.all([
         apiGet<{ matches: Match[] }>("/matches/default?k=50"),
         apiGet<Metrics>("/mlops/metrics"),
         apiGet<GnnSnapshot>("/gnn/default?k=5"),
+        apiGet<ScraperStatus>("/jobs/scraper-status"),
       ]);
       setMatches(matchData.matches || []);
       setSelectedMatch((current) => current || matchData.matches?.[0] || null);
       setMetrics(metricData);
       setGnn(gnnData);
+      setStatus(statusData);
     } catch (error) {
       setAgentOutput({ error: `${String(error)} API: ${API}` });
     } finally {
@@ -124,7 +158,12 @@ export default function Home() {
   }
 
   useEffect(() => {
-    refresh();
+    apiGet<ScraperStatus>("/jobs/scraper-status").then(setStatus).catch(() => undefined);
+    const hasResume = window.localStorage.getItem("jobgraph_resume_uploaded") === "true";
+    setResumeLoaded(hasResume);
+    if (hasResume) {
+      loadCandidate().then(refreshJobs).catch((error) => setAgentOutput({ error: String(error) }));
+    }
   }, []);
 
   const departments = useMemo(() => {
@@ -149,41 +188,61 @@ export default function Home() {
     });
   }, [department, matches]);
 
-  async function searchJobs() {
+  async function searchJobs(nextQuery = query) {
     setSearching(true);
     try {
       await apiPost("/jobs/ingest", {
-        query,
+        query: nextQuery,
         location,
         page: 1,
         results_per_page: 25,
-        sources: ["adzuna", "usajobs", "jsearch"],
+        sources: SCRAPER_SOURCES,
       });
-      await refresh();
+      await refreshJobs();
+    } catch (error) {
+      setAgentOutput({ error: String(error) });
     } finally {
       setSearching(false);
     }
   }
 
-  async function askAgent(match: Match) {
+  async function uploadResume(file: File | null) {
+    if (!file) return;
+    setResumeUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${API}/resume/upload?candidate_id=default`, { method: "POST", body: form });
+      if (!response.ok) throw new Error((await response.text()) || "Resume upload failed");
+      const profile = await response.json();
+      const nextQuery = profile.target_roles?.[0] || query;
+      window.localStorage.setItem("jobgraph_resume_uploaded", "true");
+      setCandidate(profile);
+      setResumeLoaded(true);
+      setQuery(nextQuery);
+      setAgentOutput({
+        intent: "resume_uploaded",
+        result: {
+          explanation: `Resume parsed for ${profile.name || "candidate"}. Extracted ${profile.skills?.length || 0} skills and started live scraper search.`,
+          matched_skills: profile.skills || [],
+          missing_skills: [],
+        },
+      });
+      await searchJobs(nextQuery);
+    } catch (error) {
+      setAgentOutput({ error: String(error) });
+    } finally {
+      setResumeUploading(false);
+    }
+  }
+
+  async function askAgent(match: Match, message: string) {
     setSelectedMatch(match);
-    const output = await apiPost<AgentOutput>("/agent", {
-      candidate_id: "default",
-      message: `explain ${match.job.job_id}`,
-    });
+    const output = await apiPost<AgentOutput>("/agent", { candidate_id: "default", message });
     setAgentOutput(output);
   }
 
-  async function askKeywordGaps(match: Match) {
-    setSelectedMatch(match);
-    const output = await apiPost<AgentOutput>("/agent", {
-      candidate_id: "default",
-      message: `what keywords am I missing for ${match.job.job_id}`,
-    });
-    setAgentOutput(output);
-  }
-
-  async function prepareApply(match: Match) {
+  async function apply(match: Match) {
     setSelectedMatch(match);
     const output = await apiPost<AgentOutput>("/agent", {
       candidate_id: "default",
@@ -195,126 +254,111 @@ export default function Home() {
     }
   }
 
-  async function uploadResume(file: File | null) {
-    if (!file) return;
-    setResumeUploading(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const response = await fetch(`${API}/resume/upload?candidate_id=default`, {
-        method: "POST",
-        body: form,
-      });
-      if (!response.ok) throw new Error((await response.text()) || "Resume upload failed");
-      const profile = await response.json();
-      setResumeLoaded(true);
-      setAgentOutput({
-        intent: "resume_uploaded",
-        result: {
-          explanation: `Resume parsed for ${profile.name || "candidate"}. Extracted ${profile.skills?.length || 0} skills; job rankings now use this profile.`,
-          matched_skills: profile.skills || [],
-          missing_skills: [],
-        },
-      });
-      await refresh();
-    } catch (error) {
-      setAgentOutput({ error: String(error) });
-    } finally {
-      setResumeUploading(false);
-    }
-  }
+  if (!resumeLoaded) {
+    return (
+      <main className="page">
+        <header className="siteHeader">
+          <a className="wordmark" href="#">JobGraph AI</a>
+          <nav>
+            <span>{status?.jobspy_available ? "JobSpy ready" : "Checking scraper"}</span>
+            <span>Python {status?.python_version || "-"}</span>
+          </nav>
+        </header>
 
-  async function apply(match: Match) {
-    if (!match.job.apply_url) {
-      setAgentOutput({
-        intent: "apply",
-        result: { explanation: "This posting does not include a real apply URL. Run a live search with configured providers." },
-      });
-      return;
-    }
-    await prepareApply(match);
+        <section className="uploadLanding">
+          <div>
+            <p className="eyebrow">Resume-first job search</p>
+            <h1>Upload your resume. Get matched to real openings.</h1>
+            <p>
+              A quiet workspace for finding roles that fit. Upload once, then review live openings ranked against
+              your resume with graph recommendations.
+            </p>
+            <label className="primaryUpload compactUpload">
+              {resumeUploading ? "Parsing resume..." : "Upload PDF or TXT"}
+              <input type="file" accept=".pdf,.txt" onChange={(event) => uploadResume(event.target.files?.[0] || null)} />
+            </label>
+            {agentOutput?.error && <p className="errorText">{agentOutput.error}</p>}
+          </div>
+
+          <aside className="processCard">
+            <div>
+              <span>1</span>
+              <strong>Parse resume</strong>
+              <p>Extract skills, links, role targets, and autofill fields.</p>
+            </div>
+            <div>
+              <span>2</span>
+              <strong>Scrape jobs</strong>
+              <p>Use JobSpy plus Ashby, Greenhouse, Lever, and Workday boards.</p>
+            </div>
+            <div>
+              <span>3</span>
+              <strong>Apply with agent</strong>
+              <p>Open the real portal and prepare browser autofill.</p>
+            </div>
+          </aside>
+        </section>
+      </main>
+    );
   }
 
   return (
     <main className="page">
       <header className="siteHeader">
-        <a className="wordmark" href="#">
-          JobGraph AI
-        </a>
+        <a className="wordmark" href="#">JobGraph AI</a>
         <nav>
-          <a href="#openings">Open roles</a>
+          <a href="#openings">Jobs</a>
           <a href="#agent">Agent</a>
-          <a href="#graph">Graph model</a>
+          <a href="#graph">GNN</a>
         </nav>
       </header>
 
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Real-time AI job search</p>
-          <h1>Open roles matched to your profile.</h1>
-          <p>
-            Search live job sources, rank openings with GraphSAGE-style matching, and apply through the original company or provider portal.
-          </p>
+      <section className="appTop">
+        <div className="profileCard">
+          <span>Resume profile</span>
+          <h1>{candidate?.name || "Candidate"}</h1>
+          <p>{candidate?.email || "Resume parsed"}{" · "}{(candidate?.skills || []).length} skills extracted</p>
+          <div className="profileSkills">
+            {(candidate?.skills || []).slice(0, 10).map((skill) => <span key={skill}>{skill}</span>)}
+          </div>
         </div>
-        <div className="heroAside">
-          <span>Active agent</span>
-          <strong>{agentOutput?.agent || "jobgraph_react_tool_agent_v2"}</strong>
-          <p>{gnn?.diagnostics.model || "local_graphsage_message_passing_v1"}</p>
-        </div>
-      </section>
 
-      <section className="workflow">
-        <div>
-          <span>1</span>
-          <strong>Upload resume</strong>
-          <p>Parse your resume into skills and autofill fields.</p>
-        </div>
-        <div>
-          <span>2</span>
-          <strong>Filter live jobs</strong>
-          <p>Rank openings with semantic and GraphSAGE signals.</p>
-        </div>
-        <div>
-          <span>3</span>
-          <strong>Ask agent</strong>
-          <p>Find missing keywords, tailor your resume, and prepare apply.</p>
-        </div>
-        <label className="uploadButton">
-          {resumeUploading ? "Uploading..." : resumeLoaded ? "Resume uploaded" : "Upload resume"}
-          <input type="file" accept=".pdf,.txt" onChange={(event) => uploadResume(event.target.files?.[0] || null)} />
-        </label>
-      </section>
-
-      <section className="controls" aria-label="Job search controls">
-        <label>
-          Search
-          <input value={query} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <label>
-          Location
-          <input value={location} onChange={(event) => setLocation(event.target.value)} />
-        </label>
-        <label>
-          Team
-          <select value={department} onChange={(event) => setDepartment(event.target.value)}>
-            {departments.map((item) => (
-              <option key={item}>{item}</option>
+        <div className="searchCard">
+          <div className="controls inlineControls" aria-label="Job search controls">
+            <label>
+              Search
+              <input value={query} onChange={(event) => setQuery(event.target.value)} />
+            </label>
+            <label>
+              Location
+              <input value={location} onChange={(event) => setLocation(event.target.value)} />
+            </label>
+            <label>
+              Team
+              <select value={department} onChange={(event) => setDepartment(event.target.value)}>
+                {departments.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <button onClick={() => searchJobs()} disabled={searching}>
+              {searching ? "Searching..." : "Refresh jobs"}
+            </button>
+          </div>
+          <div className="sourcePills">
+            {(uniqueSources(metrics).length ? uniqueSources(metrics) : SCRAPER_SOURCES).map((source) => (
+              <span key={source}>{sourceName(source)}</span>
             ))}
-          </select>
-        </label>
-        <button onClick={searchJobs} disabled={searching}>
-          {searching ? "Searching..." : "Search jobs"}
-        </button>
+          </div>
+        </div>
       </section>
 
       <section className="summary" id="graph">
         <div>
-          <span>Openings</span>
+          <span>Matched openings</span>
           <strong>{loading ? "-" : filteredMatches.length}</strong>
         </div>
         <div>
-          <span>Sources</span>
-          <strong>{Object.keys(metrics?.jobs_by_source || {}).join(", ") || "-"}</strong>
+          <span>Scraper jobs</span>
+          <strong>{metrics?.jobs_total ?? "-"}</strong>
         </div>
         <div>
           <span>Graph</span>
@@ -325,7 +369,7 @@ export default function Home() {
       <section className="contentGrid">
         <section className="jobs" id="openings">
           <div className="sectionTitle">
-            <h2>Current openings</h2>
+            <h2>Recommended jobs</h2>
             <span>{metrics?.model || "GraphSAGE ranker"}</span>
           </div>
 
@@ -334,37 +378,29 @@ export default function Home() {
               const pay = formatPay(match.job);
               return (
                 <article className={`jobRow ${selectedMatch?.job.job_id === match.job.job_id ? "selected" : ""}`} key={match.job.job_id}>
-                  <div className="jobCopy">
-                    <div className="metaLine">
+                  <button className="jobSelect" onClick={() => setSelectedMatch(match)}>
+                    <div className="roleMeta">
                       <span>{sourceName(match.job.source)}</span>
-                      {match.job.work_model && <span>{match.job.work_model}</span>}
+                      <span>{match.job.work_model}</span>
                       {pay && <span>{pay}</span>}
                     </div>
                     <h3>{match.job.title}</h3>
-                    <p>{match.job.company} · {match.job.location || "United States"}</p>
-                    <p className="description">{match.job.description}</p>
-                    <div className="skills">
-                      {match.matched_skills.slice(0, 5).map((skill) => (
-                        <span key={skill}>{skill}</span>
-                      ))}
-                    </div>
+                    <p>{match.job.company}{" · "}{match.job.location || "United States"}</p>
+                  </button>
+
+                  <div className="rowActions">
+                    <span>{Math.round(match.score)}%</span>
+                    <button onClick={() => askAgent(match, `explain ${match.job.job_id}`)}>Explain</button>
+                    <button onClick={() => askAgent(match, `what keywords am I missing for ${match.job.job_id}`)}>Keywords</button>
+                    <button className="apply" onClick={() => apply(match)} disabled={!match.job.apply_url}>Apply</button>
                   </div>
-                  <aside className="jobActions">
-                    <div className="score">{Math.round(match.score)}%</div>
-                    <button onClick={() => setSelectedMatch(match)}>Details</button>
-                    <button onClick={() => askAgent(match)}>Explain</button>
-                    <button onClick={() => askKeywordGaps(match)}>Keywords</button>
-                    <button className="apply" onClick={() => apply(match)} disabled={!match.job.apply_url}>
-                      {match.job.apply_url ? "Prepare apply" : "No apply link"}
-                    </button>
-                  </aside>
                 </article>
               );
             })}
             {!filteredMatches.length && (
               <div className="empty">
-                <strong>{loading ? "Loading openings..." : "No openings found"}</strong>
-                <span>Run a live search or adjust filters.</span>
+                <strong>{loading || searching ? "Loading real openings..." : "No scraper jobs found"}</strong>
+                <span>Refresh jobs or add ATS board names in `.env`.</span>
               </div>
             )}
           </div>
@@ -372,9 +408,9 @@ export default function Home() {
 
         <aside className="agentPanel" id="agent">
           <div className="agentHeader">
-            <span>Agent workspace</span>
-            <h2>{selectedMatch?.job.title || "Select a role"}</h2>
-            {selectedMatch && <p>{selectedMatch.job.company} · {selectedMatch.job.location}</p>}
+            <span>Application agent</span>
+            <h2>{selectedMatch?.job.title || "Select a job"}</h2>
+            {selectedMatch && <p>{selectedMatch.job.company}{" · "}{selectedMatch.job.location}</p>}
           </div>
 
           {selectedMatch && (
@@ -394,7 +430,7 @@ export default function Home() {
             <h3>Plan</h3>
             {(agentOutput?.plan || [
               { tool: "select_job", status: selectedMatch ? "completed" : "waiting", reason: "Choose a role to inspect fit." },
-              { tool: "explain_match", status: "waiting", reason: "Run Ask agent to generate an evidence-backed explanation." },
+              { tool: "prepare_application", status: "waiting", reason: "Apply opens the company portal and prepares autofill." },
             ]).map((step, index) => (
               <div className="traceStep" key={`${step.tool}-${index}`}>
                 <span>{index + 1}</span>
@@ -409,16 +445,14 @@ export default function Home() {
 
           <div className="agentResult">
             <h3>Reasoning</h3>
-            <p>{agentOutput?.result?.explanation || selectedMatch?.explanation || "Ask the agent to explain fit, gaps, and next actions."}</p>
+            <p>{agentOutput?.error || agentOutput?.result?.explanation || selectedMatch?.explanation || "Ask the agent to explain fit, keyword gaps, or apply readiness."}</p>
           </div>
 
           {agentOutput?.result?.resume_strategy && (
             <div className="agentResult">
               <h3>Resume targeting</h3>
               <ul>
-                {agentOutput.result.resume_strategy.resume_strategy?.slice(0, 4).map((item: string) => (
-                  <li key={item}>{item}</li>
-                ))}
+                {agentOutput.result.resume_strategy.resume_strategy?.slice(0, 4).map((item) => <li key={item}>{item}</li>)}
               </ul>
             </div>
           )}
@@ -426,21 +460,17 @@ export default function Home() {
           <div className="skillColumns">
             <div>
               <h3>Strengths</h3>
-              {(agentOutput?.result?.matched_skills || selectedMatch?.matched_skills || []).slice(0, 5).map((skill) => (
-                <span key={skill}>{skill}</span>
-              ))}
+              {(agentOutput?.result?.matched_skills || selectedMatch?.matched_skills || []).slice(0, 5).map((skill) => <span key={skill}>{skill}</span>)}
             </div>
             <div>
               <h3>Gaps</h3>
-              {(agentOutput?.result?.missing_skills || selectedMatch?.missing_skills || []).slice(0, 5).map((skill) => (
-                <span key={skill}>{skill}</span>
-              ))}
+              {(agentOutput?.result?.missing_skills || selectedMatch?.missing_skills || []).slice(0, 5).map((skill) => <span key={skill}>{skill}</span>)}
             </div>
           </div>
 
           <div className="modelNote">
             <strong>{gnn?.diagnostics.model || "local_graphsage_message_passing_v1"}</strong>
-            <span>{gnn ? `${gnn.diagnostics.nodes} nodes and ${gnn.diagnostics.edges} graph edges scored for this feed.` : "Hybrid semantic + GraphSAGE recommendation scoring."}</span>
+            <span>{status?.jobspy_available ? "JobSpy scraper is active." : "JobSpy is not available in the running Python environment."}</span>
           </div>
         </aside>
       </section>

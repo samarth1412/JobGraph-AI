@@ -17,6 +17,11 @@ def list_jobs() -> List[Job]:
         return repository.list_jobs(session)
 
 
+def delete_jobs_by_sources(sources: List[str]) -> int:
+    with session_scope() as session:
+        return repository.delete_jobs_by_sources(session, sources)
+
+
 def get_job(job_id: str) -> Job:
     with session_scope() as session:
         return repository.get_job(session, job_id)

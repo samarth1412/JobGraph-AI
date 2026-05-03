@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     jsearch_api_key: str = ""
     openai_api_key: str = ""
     database_url: str = "sqlite:///./jobgraph.db"
+    jobspy_sites: str = "indeed,linkedin,zip_recruiter,google"
+    jobspy_hours_old: int = 168
+    jobspy_country: str = "USA"
+    ashby_job_boards: str = "Ashby"
+    greenhouse_boards: str = ""
+    lever_companies: str = ""
+    workday_boards: str = ""
 
     class Config:
         env_file = ".env"

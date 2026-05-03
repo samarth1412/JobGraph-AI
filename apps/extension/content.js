@@ -20,7 +20,25 @@ function labelFor(input) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "JOBGRAPH_AUTOFILL") return;
-  const profile = message.profile;
+  fillProfile(message.profile);
+});
+
+async function autoFillIfEnabled() {
+  chrome.storage.local.get(["jobgraphApi", "jobgraphCandidate", "jobgraphAutoFill"], async (settings) => {
+    if (!settings.jobgraphAutoFill) return;
+    const api = (settings.jobgraphApi || "http://127.0.0.1:8022").replace(/\/$/, "");
+    const candidate = settings.jobgraphCandidate || "default";
+    try {
+      const response = await fetch(`${api}/autofill/${encodeURIComponent(candidate)}`);
+      if (!response.ok) return;
+      fillProfile(await response.json());
+    } catch {
+      // Silent by design: application pages should not show extension errors.
+    }
+  });
+}
+
+function fillProfile(profile) {
   document.querySelectorAll("input, textarea, select").forEach((input) => {
     if (input.type === "file" || input.type === "hidden" || input.disabled || input.readOnly) return;
     const label = labelFor(input);
@@ -33,4 +51,6 @@ chrome.runtime.onMessage.addListener((message) => {
       }
     }
   });
-});
+}
+
+setTimeout(autoFillIfEnabled, 900);
