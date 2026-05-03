@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     jobspy_sites: str = "indeed,linkedin,zip_recruiter,google"
     jobspy_hours_old: int = 168
     jobspy_country: str = "USA"
-    ashby_job_boards: str = "Ashby"
-    greenhouse_boards: str = ""
-    lever_companies: str = ""
+    ashby_job_boards: str = "Ashby,OpenAI"
+    greenhouse_boards: str = "airbnb,stripe,doordash,reddit,instacart,databricks"
+    lever_companies: str = "netflix,scaleai,figma"
     workday_boards: str = ""
 
     class Config:

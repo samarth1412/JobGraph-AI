@@ -10,7 +10,10 @@ SKILL_VOCAB = sorted({
     "Transformers", "Graph Neural Networks", "PyTorch Geometric", "Recommendation Systems", "Ranking",
     "A/B Testing", "Feature Store", "Model Serving", "MLOps", "OpenTelemetry", "Prometheus", "Grafana",
     "PostgreSQL", "Redis", "pgvector", "Vector Search", "NLP", "Computer Vision", "Time Series",
-    "Experiment Tracking", "CI/CD", "GitHub Actions", "React", "Next.js", "TypeScript"
+    "Experiment Tracking", "CI/CD", "GitHub Actions", "React", "Next.js", "TypeScript",
+    "Salesforce", "CRM", "Account Management", "Lead Generation", "Customer Success", "HubSpot",
+    "Excel", "Tableau", "Power BI", "Go", "Node.js", "Django", "Flask", "REST", "GraphQL",
+    "Product Management", "Jira", "Figma", "Analytics", "Statistics"
 })
 
 ALIASES = {

@@ -1,26 +1,32 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
     ApplicationRecord,
+    ApplyAgentRunRecord,
+    ApplySessionRecord,
     AutofillRecord,
     CandidateRecord,
     IngestionRunRecord,
     IntegrationSettingsRecord,
     JobRecord,
+    RecommendationRunRecord,
 )
 from backend.app.schemas import (
     ApplicationEvent,
+    ApplyAgentRun,
+    ApplySession,
     AutofillProfile,
     CandidateProfile,
     IngestionRun,
     IntegrationSettings,
     IntegrationStatus,
     Job,
+    RecommendationRun,
 )
 
 
@@ -160,17 +166,18 @@ def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProf
     if not autofill:
         session.add(AutofillRecord(**candidate_autofill.model_dump()))
     else:
-        for key in ("legal_name", "email", "phone", "linkedin", "github", "portfolio"):
-            current = getattr(autofill, key)
-            incoming = getattr(candidate_autofill, key)
-            if incoming and not current:
-                setattr(autofill, key, incoming)
-        for key in ("work_authorization", "sponsorship_required"):
-            incoming = getattr(candidate_autofill, key)
-            if incoming:
-                setattr(autofill, key, incoming)
-        if candidate_autofill.education:
-            autofill.education = candidate_autofill.education
+        for key in (
+            "legal_name",
+            "email",
+            "phone",
+            "linkedin",
+            "github",
+            "portfolio",
+            "work_authorization",
+            "sponsorship_required",
+            "education",
+        ):
+            setattr(autofill, key, getattr(candidate_autofill, key))
     return profile
 
 
@@ -233,13 +240,110 @@ def get_autofill(session: Session, candidate_id: str) -> AutofillProfile:
     return profile
 
 
+def save_apply_session(session: Session, apply_session: ApplySession) -> ApplySession:
+    record = ApplySessionRecord(**apply_session.model_dump(exclude={"id"}))
+    session.add(record)
+    session.flush()
+    return record_to_apply_session(record)
+
+
+def record_to_apply_session(record: ApplySessionRecord) -> ApplySession:
+    return ApplySession(
+        id=record.id,
+        candidate_id=record.candidate_id,
+        job_id=record.job_id,
+        apply_url=record.apply_url,
+        status=record.status,
+        autofill_profile=dict(record.autofill_profile or {}),
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+    )
+
+
+def latest_apply_session(session: Session, candidate_id: str) -> Optional[ApplySession]:
+    record = session.scalars(
+        select(ApplySessionRecord)
+        .where(ApplySessionRecord.candidate_id == candidate_id)
+        .where(ApplySessionRecord.status == "pending")
+        .order_by(ApplySessionRecord.created_at.desc())
+        .limit(1)
+    ).first()
+    return record_to_apply_session(record) if record else None
+
+
+def update_apply_session_status(session: Session, session_id: int, status: str) -> ApplySession:
+    record = session.get(ApplySessionRecord, session_id)
+    if not record:
+        raise KeyError(session_id)
+    record.status = status
+    session.flush()
+    return record_to_apply_session(record)
+
+
+def save_apply_agent_run(session: Session, run: ApplyAgentRun) -> ApplyAgentRun:
+    payload = run.model_dump(exclude={"id", "metadata"})
+    payload["run_metadata"] = run.metadata
+    if run.id:
+        record = session.get(ApplyAgentRunRecord, run.id)
+        if not record:
+            raise KeyError(run.id)
+        for key, value in payload.items():
+            setattr(record, key, value)
+    else:
+        record = ApplyAgentRunRecord(**payload)
+        session.add(record)
+    session.flush()
+    return record_to_apply_agent_run(record)
+
+
+def get_apply_agent_run(session: Session, run_id: int) -> ApplyAgentRun:
+    record = session.get(ApplyAgentRunRecord, run_id)
+    if not record:
+        raise KeyError(run_id)
+    return record_to_apply_agent_run(record)
+
+
+def list_apply_agent_runs(session: Session, candidate_id: str, limit: int = 10) -> List[ApplyAgentRun]:
+    rows = session.scalars(
+        select(ApplyAgentRunRecord)
+        .where(ApplyAgentRunRecord.candidate_id == candidate_id)
+        .order_by(ApplyAgentRunRecord.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [record_to_apply_agent_run(row) for row in rows]
+
+
+def record_to_apply_agent_run(record: ApplyAgentRunRecord) -> ApplyAgentRun:
+    return ApplyAgentRun(
+        id=record.id,
+        candidate_id=record.candidate_id,
+        job_id=record.job_id,
+        apply_url=record.apply_url,
+        status=record.status,
+        ats=record.ats,
+        current_url=record.current_url,
+        filled_fields=list(record.filled_fields or []),
+        blockers=list(record.blockers or []),
+        file_fields=list(record.file_fields or []),
+        page_summary=record.page_summary,
+        error=record.error,
+        metadata=dict(record.run_metadata or {}),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        finished_at=record.finished_at,
+    )
+
+
 def counts(session: Session) -> dict:
     source_rows = session.execute(select(JobRecord.source, func.count(JobRecord.job_id)).group_by(JobRecord.source)).all()
     return {
         "jobs_total": session.scalar(select(func.count(JobRecord.job_id))) or 0,
         "candidates_total": session.scalar(select(func.count(CandidateRecord.candidate_id))) or 0,
         "applications_total": session.scalar(select(func.count(ApplicationRecord.id))) or 0,
+        "apply_sessions_total": session.scalar(select(func.count(ApplySessionRecord.id))) or 0,
+        "apply_agent_runs_total": session.scalar(select(func.count(ApplyAgentRunRecord.id))) or 0,
         "ingestion_runs_total": session.scalar(select(func.count(IngestionRunRecord.id))) or 0,
+        "recommendation_runs_total": session.scalar(select(func.count(RecommendationRunRecord.id))) or 0,
         "jobs_by_source": {source: count for source, count in source_rows},
     }
 
@@ -313,3 +417,41 @@ def record_to_ingestion_run(record: IngestionRunRecord) -> IngestionRun:
 def list_ingestion_runs(session: Session, limit: int = 10) -> List[IngestionRun]:
     rows = session.scalars(select(IngestionRunRecord).order_by(IngestionRunRecord.started_at.desc()).limit(limit)).all()
     return [record_to_ingestion_run(row) for row in rows]
+
+
+def recommendation_run_to_record(run: RecommendationRun) -> RecommendationRunRecord:
+    payload = run.model_dump(exclude={"id"})
+    return RecommendationRunRecord(**payload)
+
+
+def record_to_recommendation_run(record: RecommendationRunRecord) -> RecommendationRun:
+    return RecommendationRun(
+        id=record.id,
+        candidate_id=record.candidate_id,
+        query=record.query,
+        location=record.location,
+        model_source=record.model_source,
+        model_version=record.model_version,
+        job_pool_size=record.job_pool_size,
+        match_job_ids=list(record.match_job_ids or []),
+        parsed_resume=dict(record.parsed_resume or {}),
+        diagnostics=dict(record.diagnostics or {}),
+        created_at=record.created_at,
+    )
+
+
+def save_recommendation_run(session: Session, run: RecommendationRun) -> RecommendationRun:
+    record = recommendation_run_to_record(run)
+    session.add(record)
+    session.flush()
+    return record_to_recommendation_run(record)
+
+
+def list_recommendation_runs(session: Session, candidate_id: str, limit: int = 10) -> List[RecommendationRun]:
+    rows = session.scalars(
+        select(RecommendationRunRecord)
+        .where(RecommendationRunRecord.candidate_id == candidate_id)
+        .order_by(RecommendationRunRecord.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [record_to_recommendation_run(row) for row in rows]

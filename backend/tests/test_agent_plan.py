@@ -55,4 +55,5 @@ def test_copilot_keyword_gap_and_apply_plans():
     assert "missing_keywords" in keyword_output["result"]
     assert apply_output["plan"][-1]["tool"] == "prepare_application"
     assert apply_output["result"]["can_open_apply_portal"] is True
+    assert apply_output["result"]["apply_session_id"] is not None
     assert apply_output["result"]["human_review_required"] is True

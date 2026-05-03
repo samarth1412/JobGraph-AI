@@ -4,6 +4,7 @@ from typing import List
 
 from backend.app.matching.graphsage import graphsage_affinity_scores
 from backend.app.matching.semantic import semantic_scores
+from backend.app.matching.trained_gnn import trained_scores
 from backend.app.schemas import CandidateProfile, Job, MatchResult
 
 
@@ -11,6 +12,7 @@ def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List
     candidate_skills = {skill.lower(): skill for skill in candidate.skills}
     semantic = semantic_scores(candidate, jobs)
     graph_affinity, _diagnostics = graphsage_affinity_scores(candidate, jobs)
+    learned_scores, model_source = trained_scores(candidate, jobs)
     results: List[MatchResult] = []
 
     for index, job in enumerate(jobs):
@@ -22,7 +24,8 @@ def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List
         skill_score = len(matched_keys) / max(len(required), 1)
         semantic_score = semantic[index] if index < len(semantic) else 0.0
         graph_score = graph_affinity[index] if index < len(graph_affinity) else 0.0
-        score = min(1.0, 0.42 * skill_score + 0.16 * semantic_score + 0.27 * graph_score + role_bonus + location_bonus)
+        base_score = min(1.0, 0.42 * skill_score + 0.16 * semantic_score + 0.27 * graph_score + role_bonus + location_bonus)
+        score = (0.58 * base_score + 0.42 * learned_scores[index]) if learned_scores else base_score
         matched = [required[key] for key in matched_keys]
         missing = [required[key] for key in missing_keys]
         results.append(
@@ -32,7 +35,10 @@ def rank_jobs(candidate: CandidateProfile, jobs: List[Job], k: int = 25) -> List
                 matched_skills=matched,
                 missing_skills=missing,
                 explanation=explain(job, matched, missing, score, semantic_score, graph_score),
-                model_source="hybrid_skill_semantic_graphsage_ranker_v3",
+                model_source=model_source,
+                gnn_score=round(graph_score * 100, 1),
+                semantic_score=round(semantic_score * 100, 1),
+                skill_overlap_score=round(skill_score * 100, 1),
             )
         )
 

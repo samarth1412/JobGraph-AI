@@ -45,7 +45,7 @@ class SearchRequest(BaseModel):
     location: str = "United States"
     page: int = 1
     results_per_page: int = 25
-    sources: List[str] = Field(default_factory=lambda: ["jobspy", "ashby", "greenhouse", "lever", "workday"])
+    sources: List[str] = Field(default_factory=lambda: ["ashby", "greenhouse", "lever", "workday"])
 
 
 class IntegrationSettings(BaseModel):
@@ -61,7 +61,7 @@ class IntegrationStatus(BaseModel):
     usajobs_configured: bool = False
     jsearch_configured: bool = False
     usajobs_user_agent: str = ""
-    scraper_sources: List[str] = Field(default_factory=lambda: ["jobspy", "ashby", "greenhouse", "lever", "workday"])
+    scraper_sources: List[str] = Field(default_factory=lambda: ["ashby", "greenhouse", "lever", "workday"])
 
 
 class IngestionRun(BaseModel):
@@ -84,6 +84,33 @@ class MatchResult(BaseModel):
     missing_skills: List[str]
     explanation: str
     model_source: str = "skill_graph_ranker"
+    gnn_score: float = 0.0
+    semantic_score: float = 0.0
+    skill_overlap_score: float = 0.0
+
+
+class ResumeRecommendationResponse(BaseModel):
+    candidate_id: str
+    candidate: CandidateProfile
+    matches: List[MatchResult]
+    gnn_diagnostics: Dict[str, Any]
+    ingestion: Dict[str, Any] = Field(default_factory=dict)
+    recommendation_run: Dict[str, Any] = Field(default_factory=dict)
+    parsed_resume: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RecommendationRun(BaseModel):
+    id: Optional[int] = None
+    candidate_id: str = "default"
+    query: str = ""
+    location: str = ""
+    model_source: str = ""
+    model_version: str = ""
+    job_pool_size: int = 0
+    match_job_ids: List[str] = Field(default_factory=list)
+    parsed_resume: Dict[str, Any] = Field(default_factory=dict)
+    diagnostics: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AgentRequest(BaseModel):
@@ -111,3 +138,39 @@ class AutofillProfile(BaseModel):
     sponsorship_required: str = ""
     education: Dict[str, str] = Field(default_factory=dict)
     custom_answers: Dict[str, str] = Field(default_factory=dict)
+
+
+class ApplySession(BaseModel):
+    id: Optional[int] = None
+    candidate_id: str = "default"
+    job_id: str
+    apply_url: str = ""
+    status: str = "pending"
+    autofill_profile: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: Optional[datetime] = None
+
+
+class ApplyAgentRunRequest(BaseModel):
+    candidate_id: str = "default"
+    job_id: str
+    headless: bool = False
+
+
+class ApplyAgentRun(BaseModel):
+    id: Optional[int] = None
+    candidate_id: str = "default"
+    job_id: str
+    apply_url: str = ""
+    status: str = "starting"
+    ats: str = "generic"
+    current_url: str = ""
+    filled_fields: List[Dict[str, Any]] = Field(default_factory=list)
+    blockers: List[Dict[str, Any]] = Field(default_factory=list)
+    file_fields: List[Dict[str, Any]] = Field(default_factory=list)
+    page_summary: str = ""
+    error: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None

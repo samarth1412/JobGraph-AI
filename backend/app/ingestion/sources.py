@@ -5,13 +5,13 @@ from typing import Iterable, List
 
 from backend.app.schemas import Job
 
-SEARCH_SOURCES = ["jobspy", "ashby", "greenhouse", "lever", "workday"]
+SEARCH_SOURCES = ["ashby", "greenhouse", "lever", "workday"]
 ATS_SOURCES = {"ashby", "greenhouse", "lever", "workday"}
 LEGACY_SOURCES = {"adzuna", "usajobs", "jsearch", "demo"}
 
 
 def is_scraper_source(source: str) -> bool:
-    return source in ATS_SOURCES or source.startswith("jobspy_")
+    return source in ATS_SOURCES
 
 
 def scraper_jobs(jobs: Iterable[Job]) -> List[Job]:

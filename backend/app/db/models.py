@@ -74,6 +74,40 @@ class AutofillRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ApplySessionRecord(Base):
+    __tablename__ = "apply_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(String(128), index=True)
+    apply_url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
+    autofill_profile: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class ApplyAgentRunRecord(Base):
+    __tablename__ = "apply_agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(String(128), index=True)
+    apply_url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(64), default="starting", index=True)
+    ats: Mapped[str] = mapped_column(String(64), default="generic")
+    current_url: Mapped[str] = mapped_column(Text, default="")
+    filled_fields: Mapped[List[Dict]] = mapped_column(JSON, default=list)
+    blockers: Mapped[List[Dict]] = mapped_column(JSON, default=list)
+    file_fields: Mapped[List[Dict]] = mapped_column(JSON, default=list)
+    page_summary: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    run_metadata: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class IntegrationSettingsRecord(Base):
     __tablename__ = "integration_settings"
 
@@ -99,3 +133,19 @@ class IngestionRunRecord(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class RecommendationRunRecord(Base):
+    __tablename__ = "recommendation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), index=True)
+    query: Mapped[str] = mapped_column(String(512), default="")
+    location: Mapped[str] = mapped_column(String(256), default="")
+    model_source: Mapped[str] = mapped_column(String(128), default="")
+    model_version: Mapped[str] = mapped_column(String(128), default="")
+    job_pool_size: Mapped[int] = mapped_column(Integer, default=0)
+    match_job_ids: Mapped[List[str]] = mapped_column(JSON, default=list)
+    parsed_resume: Mapped[Dict] = mapped_column(JSON, default=dict)
+    diagnostics: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

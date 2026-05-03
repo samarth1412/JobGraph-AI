@@ -1,31 +1,39 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import importlib.util
 from pathlib import Path
 import sys
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agents.copilot import run_copilot
+from backend.app.apply_agent.browser import cancel_apply_run, continue_apply_run, create_apply_run, execute_apply_run
 from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
 from backend.app.ingestion.sources import LEGACY_SOURCES, scraper_jobs
 from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.graphsage import graphsage_affinity_scores
+from backend.app.matching.evaluation import evaluate_ranker
 from backend.app.matching.ranker import rank_jobs
+from backend.app.matching.pytorch_gnn import load_pytorch_graphsage_metadata
+from backend.app.matching.trained_gnn import load_trained_ranker, train_graph_ranker
 from backend.app.mlops.metrics import system_metrics
 from backend.app.resume.parser import extract_text_from_pdf, parse_resume_text
 from backend.app.schemas import (
     AgentRequest,
+    ApplyAgentRunRequest,
     ApplicationEvent,
     AutofillProfile,
     CandidateProfile,
     IngestionRun,
     IntegrationSettings,
+    RecommendationRun,
+    ResumeRecommendationResponse,
     SearchRequest,
 )
 from backend.app.seed import seed
@@ -82,6 +90,11 @@ def ingestion_runs(limit: int = 10) -> List[Dict[str, Any]]:
     return [run.model_dump() for run in store.list_ingestion_runs(limit=limit)]
 
 
+@app.get("/recommendations/{candidate_id}/runs")
+def recommendation_runs(candidate_id: str = "default", limit: int = 10) -> List[Dict[str, Any]]:
+    return [run.model_dump() for run in store.list_recommendation_runs(candidate_id, limit=limit)]
+
+
 @app.get("/jobs/scraper-status")
 def scraper_status() -> Dict[str, Any]:
     from backend.app.core.config import get_settings
@@ -91,7 +104,7 @@ def scraper_status() -> Dict[str, Any]:
         "jobspy_available": importlib.util.find_spec("jobspy") is not None,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "jobspy_requires": "Python 3.10+",
-        "sources": ["jobspy", "ashby", "greenhouse", "lever", "workday"],
+        "sources": ["ashby", "greenhouse", "lever", "workday"],
         "configured_ats": {
             "ashby": [board.strip() for board in settings.ashby_job_boards.split(",") if board.strip()],
             "greenhouse": [board.strip() for board in settings.greenhouse_boards.split(",") if board.strip()],
@@ -137,14 +150,113 @@ def get_job(job_id: str) -> Dict[str, Any]:
 
 @app.post("/resume/upload")
 async def upload_resume(candidate_id: str = "default", file: UploadFile = File(...)) -> Dict[str, Any]:
+    profile = await _profile_from_upload(file, candidate_id)
+    store.save_candidate(profile)
+    return profile.model_dump()
+
+
+@app.post("/recommendations/resume")
+async def recommend_from_resume(
+    candidate_id: str = "default",
+    k: int = 25,
+    ingest: bool = False,
+    query: str = "",
+    location: str = "",
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    profile = await _profile_from_upload(file, candidate_id)
+    store.save_candidate(profile)
+    search_query, search_location = _search_plan(profile, query=query, location=location)
+    ingestion = _ingest_for_profile(profile, query=search_query, location=search_location, k=k) if ingest else {"requested": False}
+    jobs = scraper_jobs(store.list_jobs())
+    _scores, diagnostics = graphsage_affinity_scores(profile, jobs)
+    matches = rank_jobs(profile, jobs, k=k)
+    model_source = matches[0].model_source if matches else "hybrid_skill_semantic_graphsage_ranker_v3"
+    parsed_resume = _parsed_resume_summary(profile, search_query, search_location)
+    gnn_diagnostics = {
+        **diagnostics.__dict__,
+        "candidate_nodes": len(profile.skills) + len(profile.target_roles) + len(profile.location_preferences),
+        "job_pool_size": len(jobs),
+    }
+    run = store.save_recommendation_run(
+        RecommendationRun(
+            candidate_id=candidate_id,
+            query=search_query,
+            location=search_location,
+            model_source=model_source,
+            model_version=gnn_diagnostics["model"],
+            job_pool_size=len(jobs),
+            match_job_ids=[match.job.job_id for match in matches],
+            parsed_resume=parsed_resume,
+            diagnostics=gnn_diagnostics,
+        )
+    )
+    response = ResumeRecommendationResponse(
+        candidate_id=candidate_id,
+        candidate=profile,
+        matches=matches,
+        gnn_diagnostics=gnn_diagnostics,
+        ingestion=ingestion,
+        recommendation_run=run.model_dump(),
+        parsed_resume=parsed_resume,
+    )
+    return response.model_dump()
+
+
+async def _profile_from_upload(file: UploadFile, candidate_id: str) -> CandidateProfile:
     suffix = Path(file.filename or "resume.pdf").suffix
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = Path(tmp.name)
-    text = extract_text_from_pdf(tmp_path) if suffix.lower() == ".pdf" else tmp_path.read_text(encoding="utf-8", errors="ignore")
-    profile = parse_resume_text(text, candidate_id=candidate_id)
-    store.save_candidate(profile)
-    return profile.model_dump()
+    try:
+        text = extract_text_from_pdf(tmp_path) if suffix.lower() == ".pdf" else tmp_path.read_text(encoding="utf-8", errors="ignore")
+        return parse_resume_text(text, candidate_id=candidate_id)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _ingest_for_profile(profile: CandidateProfile, query: str = "", location: str = "", k: int = 25) -> Dict[str, Any]:
+    search_query, search_location = _search_plan(profile, query=query, location=location)
+    request = SearchRequest(query=search_query, location=search_location, results_per_page=max(k, 10))
+    run = store.save_ingestion_run(
+        IngestionRun(query=request.query, location=request.location, sources=request.sources, status="running")
+    )
+    try:
+        jobs = JobIngestionClient(store.get_integration_settings()).search(request)
+        store.upsert_jobs(jobs)
+        run.jobs_found = len(jobs)
+        run.jobs_saved = len(jobs)
+        run.status = "success"
+        run.finished_at = datetime.utcnow()
+        store.save_ingestion_run(run)
+        return {"requested": True, "status": "success", "jobs_ingested": len(jobs), "run": run.model_dump()}
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.finished_at = datetime.utcnow()
+        store.save_ingestion_run(run)
+        return {"requested": True, "status": "failed", "error": str(exc), "run": run.model_dump()}
+
+
+def _search_plan(profile: CandidateProfile, query: str = "", location: str = "") -> Tuple[str, str]:
+    search_query = query or (profile.target_roles[0] if profile.target_roles else "")
+    if not search_query and profile.skills:
+        search_query = f"{profile.skills[0]} engineer"
+    search_location = location or (profile.location_preferences[0] if profile.location_preferences else "United States")
+    return search_query or "software engineer", search_location
+
+
+def _parsed_resume_summary(profile: CandidateProfile, query: str, location: str) -> Dict[str, Any]:
+    return {
+        "name": profile.name,
+        "email": profile.email,
+        "skills": profile.skills[:18],
+        "target_roles": profile.target_roles[:8],
+        "location_preferences": profile.location_preferences[:8],
+        "experience_years": profile.experience_years,
+        "inferred_search_query": query,
+        "inferred_search_location": location,
+    }
 
 
 @app.post("/candidate")
@@ -180,8 +292,26 @@ def gnn_snapshot(candidate_id: str = "default", k: int = 10) -> Dict[str, Any]:
     return {
         "candidate_id": candidate_id,
         "diagnostics": diagnostics.__dict__,
+        "trained_model": load_trained_ranker().__dict__ if load_trained_ranker() else None,
+        "pytorch_graphsage_model": load_pytorch_graphsage_metadata(),
         "scores": [{"job_id": job.job_id, "title": job.title, "source": job.source, "gnn_score": round(score * 100, 2)} for job, score in ranked],
     }
+
+
+@app.post("/gnn/{candidate_id}/train")
+def train_gnn(candidate_id: str = "default") -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    jobs = scraper_jobs(store.list_jobs())
+    events = store.list_applications(candidate_id)
+    return train_graph_ranker(candidate, jobs, events)
+
+
+@app.get("/gnn/{candidate_id}/evaluate")
+def evaluate_gnn(candidate_id: str = "default", k: int = 10) -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    jobs = scraper_jobs(store.list_jobs())
+    events = store.list_applications(candidate_id)
+    return evaluate_ranker(candidate, jobs, events, k=k)
 
 
 @app.post("/agent")
@@ -189,10 +319,38 @@ def agent(request: AgentRequest) -> Dict[str, Any]:
     return run_copilot(request.candidate_id, request.message)
 
 
+@app.post("/apply-agent/runs")
+def start_apply_agent_run(request: ApplyAgentRunRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    run = create_apply_run(request.candidate_id, request.job_id, headless=request.headless)
+    if run.id is not None and run.status == "starting":
+        background_tasks.add_task(execute_apply_run, run.id)
+    return run.model_dump()
+
+
+@app.get("/apply-agent/runs/{run_id}")
+def get_apply_agent_run(run_id: int) -> Dict[str, Any]:
+    return store.get_apply_agent_run(run_id).model_dump()
+
+
+@app.post("/apply-agent/runs/{run_id}/continue")
+def continue_apply_agent_run(run_id: int) -> Dict[str, Any]:
+    return continue_apply_run(run_id).model_dump()
+
+
+@app.post("/apply-agent/runs/{run_id}/cancel")
+def cancel_apply_agent_run(run_id: int) -> Dict[str, Any]:
+    return cancel_apply_run(run_id).model_dump()
+
+
 @app.post("/applications")
 def track_application(event: ApplicationEvent) -> Dict[str, Any]:
     store.save_application(event)
-    return {"stored": True, "event": event.model_dump()}
+    candidate = store.get_candidate(event.candidate_id)
+    jobs = scraper_jobs(store.list_jobs())
+    events = store.list_applications(event.candidate_id)
+    training = train_graph_ranker(candidate, jobs, events)
+    evaluation = evaluate_ranker(candidate, jobs, events, k=10)
+    return {"stored": True, "event": event.model_dump(), "training": training, "evaluation": evaluation}
 
 
 @app.get("/applications/{candidate_id}")
@@ -209,6 +367,38 @@ def save_autofill(candidate_id: str, profile: AutofillProfile) -> Dict[str, Any]
 @app.get("/autofill/{candidate_id}")
 def get_autofill(candidate_id: str) -> Dict[str, Any]:
     return store.get_autofill(candidate_id).model_dump()
+
+
+@app.get("/apply-session/{candidate_id}/active")
+def active_apply_session(candidate_id: str = "default", url: str = "") -> Dict[str, Any]:
+    session = store.latest_apply_session(candidate_id)
+    if not session:
+        return {"active": False}
+    if session.expires_at and session.expires_at < datetime.utcnow():
+        store.update_apply_session_status(session.id or 0, "expired")
+        return {"active": False}
+    if url and not _urls_match(session.apply_url, url) and session.created_at < datetime.utcnow() - timedelta(minutes=3):
+        return {"active": False}
+    return {"active": True, "session": session.model_dump()}
+
+
+@app.post("/apply-session/{session_id}/filled")
+def mark_apply_session_filled(session_id: int) -> Dict[str, Any]:
+    return store.update_apply_session_status(session_id, "filled").model_dump()
+
+
+def _urls_match(expected: str, actual: str) -> bool:
+    if not expected:
+        return True
+    expected_host = _strip_www(urlparse(expected).netloc.lower())
+    actual_host = _strip_www(urlparse(actual).netloc.lower())
+    if expected_host and actual_host and expected_host == actual_host:
+        return True
+    return actual.startswith(expected) or expected.startswith(actual)
+
+
+def _strip_www(host: str) -> str:
+    return host[4:] if host.startswith("www.") else host
 
 
 @app.get("/mlops/metrics")

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from backend.app.db import repository
 from backend.app.db.session import session_scope
-from backend.app.schemas import ApplicationEvent, AutofillProfile, CandidateProfile, IngestionRun, IntegrationSettings, IntegrationStatus, Job
+from backend.app.schemas import ApplicationEvent, ApplyAgentRun, ApplySession, AutofillProfile, CandidateProfile, IngestionRun, IntegrationSettings, IntegrationStatus, Job, RecommendationRun
 
 
 def upsert_jobs(jobs: List[Job]) -> List[Job]:
@@ -57,6 +57,36 @@ def get_autofill(candidate_id: str) -> AutofillProfile:
         return repository.get_autofill(session, candidate_id)
 
 
+def save_apply_session(apply_session: ApplySession) -> ApplySession:
+    with session_scope() as session:
+        return repository.save_apply_session(session, apply_session)
+
+
+def latest_apply_session(candidate_id: str) -> Optional[ApplySession]:
+    with session_scope() as session:
+        return repository.latest_apply_session(session, candidate_id)
+
+
+def update_apply_session_status(session_id: int, status: str) -> ApplySession:
+    with session_scope() as session:
+        return repository.update_apply_session_status(session, session_id, status)
+
+
+def save_apply_agent_run(run: ApplyAgentRun) -> ApplyAgentRun:
+    with session_scope() as session:
+        return repository.save_apply_agent_run(session, run)
+
+
+def get_apply_agent_run(run_id: int) -> ApplyAgentRun:
+    with session_scope() as session:
+        return repository.get_apply_agent_run(session, run_id)
+
+
+def list_apply_agent_runs(candidate_id: str, limit: int = 10) -> List[ApplyAgentRun]:
+    with session_scope() as session:
+        return repository.list_apply_agent_runs(session, candidate_id, limit=limit)
+
+
 def metrics_counts() -> dict:
     with session_scope() as session:
         return repository.counts(session)
@@ -85,3 +115,13 @@ def save_ingestion_run(run: IngestionRun) -> IngestionRun:
 def list_ingestion_runs(limit: int = 10) -> List[IngestionRun]:
     with session_scope() as session:
         return repository.list_ingestion_runs(session, limit=limit)
+
+
+def save_recommendation_run(run: RecommendationRun) -> RecommendationRun:
+    with session_scope() as session:
+        return repository.save_recommendation_run(session, run)
+
+
+def list_recommendation_runs(candidate_id: str, limit: int = 10) -> List[RecommendationRun]:
+    with session_scope() as session:
+        return repository.list_recommendation_runs(session, candidate_id, limit=limit)

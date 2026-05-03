@@ -167,18 +167,21 @@ class JobIngestionClient:
         boards = [board.strip() for board in settings.ashby_job_boards.split(",") if board.strip()]
         jobs: List[Job] = []
         for board in boards:
-            response = requests.get(
-                f"https://api.ashbyhq.com/posting-api/job-board/{board}",
-                params={"includeCompensation": "true"},
-                timeout=20,
-            )
-            response.raise_for_status()
-            rows = response.json().get("jobs", [])
-            jobs.extend(
-                from_ashby(row, board_name=board)
-                for row in rows
-                if row.get("isListed", True) and self._matches_query(row.get("title", ""), row.get("descriptionPlain", ""), request)
-            )
+            try:
+                response = requests.get(
+                    f"https://api.ashbyhq.com/posting-api/job-board/{board}",
+                    params={"includeCompensation": "true"},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                rows = response.json().get("jobs", [])
+                jobs.extend(
+                    from_ashby(row, board_name=board)
+                    for row in rows
+                    if row.get("isListed", True) and self._matches_query(row.get("title", ""), row.get("descriptionPlain", ""), request)
+                )
+            except requests.RequestException:
+                continue
         return jobs
 
     def _greenhouse(self, request: SearchRequest) -> List[Job]:
@@ -186,18 +189,21 @@ class JobIngestionClient:
         boards = [board.strip() for board in settings.greenhouse_boards.split(",") if board.strip()]
         jobs: List[Job] = []
         for board in boards:
-            response = requests.get(
-                f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs",
-                params={"content": "true"},
-                timeout=20,
-            )
-            response.raise_for_status()
-            rows = response.json().get("jobs", [])
-            jobs.extend(
-                from_greenhouse(row, board_name=board)
-                for row in rows
-                if self._matches_query(row.get("title", ""), row.get("content", ""), request)
-            )
+            try:
+                response = requests.get(
+                    f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs",
+                    params={"content": "true"},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                rows = response.json().get("jobs", [])
+                jobs.extend(
+                    from_greenhouse(row, board_name=board)
+                    for row in rows
+                    if self._matches_query(row.get("title", ""), row.get("content", ""), request)
+                )
+            except requests.RequestException:
+                continue
         return jobs
 
     def _lever(self, request: SearchRequest) -> List[Job]:
@@ -205,14 +211,17 @@ class JobIngestionClient:
         companies = [company.strip() for company in settings.lever_companies.split(",") if company.strip()]
         jobs: List[Job] = []
         for company in companies:
-            response = requests.get(f"https://api.lever.co/v0/postings/{company}", params={"mode": "json"}, timeout=20)
-            response.raise_for_status()
-            rows = response.json()
-            jobs.extend(
-                from_lever(row, company=company)
-                for row in rows
-                if self._matches_query(row.get("text", ""), " ".join(item.get("text", "") for item in row.get("lists", [])), request)
-            )
+            try:
+                response = requests.get(f"https://api.lever.co/v0/postings/{company}", params={"mode": "json"}, timeout=20)
+                response.raise_for_status()
+                rows = response.json()
+                jobs.extend(
+                    from_lever(row, company=company)
+                    for row in rows
+                    if self._matches_query(row.get("text", ""), " ".join(item.get("text", "") for item in row.get("lists", [])), request)
+                )
+            except requests.RequestException:
+                continue
         return jobs
 
     def _workday(self, request: SearchRequest) -> List[Job]:
@@ -220,20 +229,23 @@ class JobIngestionClient:
         boards = [board.strip() for board in settings.workday_boards.split(",") if board.strip()]
         jobs: List[Job] = []
         for board in boards:
-            tenant, site, base_url = self._parse_workday_board(board)
-            response = requests.post(
-                f"{base_url.rstrip('/')}/wday/cxs/{tenant}/{site}/jobs",
-                json={
-                    "appliedFacets": {},
-                    "limit": min(request.results_per_page, 50),
-                    "offset": max(request.page - 1, 0) * request.results_per_page,
-                    "searchText": request.query,
-                },
-                timeout=20,
-            )
-            response.raise_for_status()
-            rows = response.json().get("jobPostings", [])
-            jobs.extend(from_workday(row, tenant=tenant, site=site, base_url=base_url) for row in rows if row.get("title"))
+            try:
+                tenant, site, base_url = self._parse_workday_board(board)
+                response = requests.post(
+                    f"{base_url.rstrip('/')}/wday/cxs/{tenant}/{site}/jobs",
+                    json={
+                        "appliedFacets": {},
+                        "limit": min(request.results_per_page, 50),
+                        "offset": max(request.page - 1, 0) * request.results_per_page,
+                        "searchText": request.query,
+                    },
+                    timeout=20,
+                )
+                response.raise_for_status()
+                rows = response.json().get("jobPostings", [])
+                jobs.extend(from_workday(row, tenant=tenant, site=site, base_url=base_url) for row in rows if row.get("title"))
+            except (ValueError, requests.RequestException):
+                continue
         return jobs
 
     def _matches_query(self, title: str, description: str, request: SearchRequest) -> bool:

@@ -61,7 +61,7 @@ WORKDAY_BOARDS=
 DATABASE_URL=sqlite:///./jobgraph.db
 ```
 
-The resume-first web flow no longer uses Adzuna or USAJOBS by default. It calls `jobspy`, `ashby`, `greenhouse`, `lever`, and `workday`.
+The resume-first web flow no longer uses Adzuna, USAJOBS, or JobSpy/LinkedIn by default. It calls `ashby`, `greenhouse`, `lever`, and `workday`; `jobspy` remains available only when explicitly requested.
 
 ATS configuration examples:
 
