@@ -92,7 +92,7 @@ class JobSearchAgent:
 
 
 def _extract_job_id(message: str) -> Optional[str]:
-    match = re.search(r"(?:demo|adzuna|usajobs|jsearch|jobspy_[a-z0-9]+|ashby|greenhouse|lever|workday|job)_[a-z0-9_:-]+", message, flags=re.I)
+    match = re.search(r"(?:ashby|greenhouse|lever|workday|job)_[a-z0-9_:-]+", message, flags=re.I)
     if match:
         return match.group(0)
     lowered = message.lower()

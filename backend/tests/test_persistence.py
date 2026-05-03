@@ -1,7 +1,7 @@
 from backend.app.db.session import init_db
 from datetime import datetime, timedelta
 
-from backend.app.schemas import ApplicationEvent, ApplySession, AutofillProfile, CandidateProfile, RecommendationRun
+from backend.app.schemas import ApplicationEvent, ApplySession, AutofillProfile, CandidateProfile, Job, RecommendationRun
 from backend.app.seed import seed
 from backend.app.services import store
 
@@ -9,14 +9,26 @@ from backend.app.services import store
 def test_seeded_jobs_and_application_persist_through_store():
     init_db()
     seed()
+    store.upsert_jobs(
+        [
+            Job(
+                job_id="persistence_seed_job",
+                source="ashby",
+                title="ML Engineer",
+                company="PersistCo",
+                apply_url="https://example.com/apply",
+                required_skills=["Python"],
+            )
+        ]
+    )
     jobs = store.list_jobs()
-    assert jobs
+    assert any(job.job_id == "persistence_seed_job" for job in jobs)
 
-    event = ApplicationEvent(candidate_id="default", job_id=jobs[0].job_id, status="saved")
+    event = ApplicationEvent(candidate_id="default", job_id="persistence_seed_job", status="saved")
     store.save_application(event)
     applications = store.list_applications("default")
 
-    assert any(item.job_id == jobs[0].job_id and item.status == "saved" for item in applications)
+    assert any(item.job_id == "persistence_seed_job" and item.status == "saved" for item in applications)
 
 
 def test_candidate_save_populates_blank_autofill_fields():

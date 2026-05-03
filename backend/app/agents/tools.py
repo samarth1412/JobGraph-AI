@@ -11,14 +11,16 @@ from backend.app.services import store
 def find_best_jobs(candidate_id: str = "default", k: int = 10) -> dict:
     candidate = store.get_candidate(candidate_id)
     jobs = _live_preferred_jobs()
-    matches = rank_jobs(candidate, jobs, k=k)
+    events = store.list_applications(candidate_id)
+    matches = rank_jobs(candidate, jobs, k=k, application_events=events)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
 
 def explain_match(candidate_id: str, job_id: str) -> dict:
     candidate = store.get_candidate(candidate_id)
     job = store.get_job(job_id)
-    return rank_jobs(candidate, [job], k=1)[0].model_dump()
+    events = store.list_applications(candidate_id)
+    return rank_jobs(candidate, [job], k=1, application_events=events)[0].model_dump()
 
 
 def tailor_resume(candidate_id: str, job_id: str) -> dict:

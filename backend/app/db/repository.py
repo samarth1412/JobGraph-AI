@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from collections import defaultdict
+from datetime import datetime
+from typing import Dict, List, Optional
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, not_, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
@@ -18,6 +20,7 @@ from backend.app.db.models import (
 )
 from backend.app.schemas import (
     ApplicationEvent,
+    ApplicationJobSummary,
     ApplyAgentRun,
     ApplySession,
     AutofillProfile,
@@ -27,28 +30,66 @@ from backend.app.schemas import (
     IntegrationStatus,
     Job,
     RecommendationRun,
+    job_with_unified_api_fields,
+)
+
+
+_JOB_ORM_KEYS = frozenset(
+    {
+        "job_id",
+        "source",
+        "title",
+        "company",
+        "location",
+        "work_model",
+        "description",
+        "apply_url",
+        "posted_at",
+        "salary_min",
+        "salary_max",
+        "required_skills",
+        "raw",
+    }
 )
 
 
 def job_to_record(job: Job) -> JobRecord:
-    return JobRecord(**job.model_dump())
+    job = job_with_unified_api_fields(job)
+    data = job.model_dump()
+    return JobRecord(
+        job_id=data["job_id"],
+        source=data["source"],
+        title=data["title"],
+        company=data["company"],
+        location=data.get("location") or "",
+        work_model=data.get("work_model") or "unknown",
+        description=data.get("description") or "",
+        apply_url=data.get("apply_url") or "",
+        posted_at=data.get("posted_at"),
+        salary_min=data.get("salary_min"),
+        salary_max=data.get("salary_max"),
+        required_skills=list(data.get("required_skills") or []),
+        raw=dict(data.get("raw") or {}),
+    )
 
 
 def record_to_job(record: JobRecord) -> Job:
-    return Job(
-        job_id=record.job_id,
-        source=record.source,
-        title=record.title,
-        company=record.company,
-        location=record.location,
-        work_model=record.work_model,
-        description=record.description,
-        apply_url=record.apply_url,
-        posted_at=record.posted_at,
-        salary_min=record.salary_min,
-        salary_max=record.salary_max,
-        required_skills=list(record.required_skills or []),
-        raw=dict(record.raw or {}),
+    return job_with_unified_api_fields(
+        Job(
+            job_id=record.job_id,
+            source=record.source,
+            title=record.title,
+            company=record.company,
+            location=record.location,
+            work_model=record.work_model,
+            description=record.description,
+            apply_url=record.apply_url,
+            posted_at=record.posted_at,
+            salary_min=record.salary_min,
+            salary_max=record.salary_max,
+            required_skills=list(record.required_skills or []),
+            raw=dict(record.raw or {}),
+        )
     )
 
 
@@ -123,8 +164,9 @@ def record_to_autofill(record: AutofillRecord) -> AutofillProfile:
 
 def save_jobs(session: Session, jobs: List[Job]) -> List[Job]:
     for job in jobs:
+        job = job_with_unified_api_fields(job)
         existing = session.get(JobRecord, job.job_id)
-        payload = job.model_dump()
+        payload = {key: value for key, value in job.model_dump().items() if key in _JOB_ORM_KEYS}
         if existing:
             for key, value in payload.items():
                 setattr(existing, key, value)
@@ -141,6 +183,13 @@ def delete_jobs_by_sources(session: Session, sources: List[str]) -> int:
     if not sources:
         return 0
     result = session.execute(delete(JobRecord).where(JobRecord.source.in_(sources)))
+    return int(result.rowcount or 0)
+
+
+def delete_jobs_not_in_sources(session: Session, allowed_sources: List[str]) -> int:
+    if not allowed_sources:
+        return 0
+    result = session.execute(delete(JobRecord).where(not_(JobRecord.source.in_(allowed_sources))))
     return int(result.rowcount or 0)
 
 
@@ -203,9 +252,38 @@ def get_candidate(session: Session, candidate_id: str) -> CandidateProfile:
     return record_to_candidate(record)
 
 
+def record_to_application_event(row: ApplicationRecord) -> ApplicationEvent:
+    return ApplicationEvent(
+        id=row.id,
+        candidate_id=row.candidate_id,
+        job_id=row.job_id,
+        status=row.status,
+        note=row.note or "",
+        timestamp=row.timestamp,
+        applied_at=row.applied_at,
+        reminder_at=row.reminder_at,
+    )
+
+
 def save_application(session: Session, event: ApplicationEvent) -> ApplicationEvent:
-    session.add(ApplicationRecord(**event.model_dump()))
-    return event
+    from backend.app.tracking.statuses import normalize_application_status
+
+    status = normalize_application_status(event.status)
+    applied_at = event.applied_at
+    if status == "applied" and applied_at is None:
+        applied_at = datetime.utcnow()
+    row = ApplicationRecord(
+        candidate_id=event.candidate_id,
+        job_id=event.job_id,
+        status=status,
+        note=event.note or "",
+        timestamp=event.timestamp,
+        applied_at=applied_at,
+        reminder_at=event.reminder_at,
+    )
+    session.add(row)
+    session.flush()
+    return record_to_application_event(row)
 
 
 def list_applications(session: Session, candidate_id: str) -> List[ApplicationEvent]:
@@ -214,10 +292,42 @@ def list_applications(session: Session, candidate_id: str) -> List[ApplicationEv
         .where(ApplicationRecord.candidate_id == candidate_id)
         .order_by(ApplicationRecord.timestamp.desc())
     ).all()
-    return [
-        ApplicationEvent(candidate_id=row.candidate_id, job_id=row.job_id, status=row.status, note=row.note, timestamp=row.timestamp)
-        for row in rows
-    ]
+    return [record_to_application_event(row) for row in rows]
+
+
+def list_application_history_for_job(session: Session, candidate_id: str, job_id: str) -> List[ApplicationEvent]:
+    rows = session.scalars(
+        select(ApplicationRecord)
+        .where(ApplicationRecord.candidate_id == candidate_id, ApplicationRecord.job_id == job_id)
+        .order_by(ApplicationRecord.timestamp.asc())
+    ).all()
+    return [record_to_application_event(row) for row in rows]
+
+
+def list_application_summaries(session: Session, candidate_id: str) -> List[ApplicationJobSummary]:
+    rows = session.scalars(
+        select(ApplicationRecord).where(ApplicationRecord.candidate_id == candidate_id).order_by(ApplicationRecord.timestamp.asc())
+    ).all()
+    by_job: Dict[str, List[ApplicationRecord]] = defaultdict(list)
+    for row in rows:
+        by_job[row.job_id].append(row)
+    summaries: List[ApplicationJobSummary] = []
+    for job_id, job_rows in by_job.items():
+        job_rows.sort(key=lambda r: r.timestamp)
+        last = job_rows[-1]
+        summaries.append(
+            ApplicationJobSummary(
+                job_id=job_id,
+                latest_status=last.status,
+                latest_note=last.note or "",
+                applied_at=last.applied_at,
+                reminder_at=last.reminder_at,
+                last_updated=last.timestamp,
+                history_count=len(job_rows),
+            )
+        )
+    summaries.sort(key=lambda s: s.last_updated, reverse=True)
+    return summaries
 
 
 def save_autofill(session: Session, profile: AutofillProfile) -> AutofillProfile:
@@ -372,12 +482,20 @@ def get_integration_settings(session: Session) -> IntegrationSettings:
     )
 
 
-def integration_status_from_settings(settings: IntegrationSettings) -> IntegrationStatus:
+def integration_status_from_settings(_settings: IntegrationSettings) -> IntegrationStatus:
+    from backend.app.core.config import get_settings
+    from backend.app.ingestion.companies_catalog import catalog_meta
+
+    meta = catalog_meta(get_settings())
+    ats = ["ashby", "greenhouse", "lever", "workday"]
     return IntegrationStatus(
-        adzuna_configured=bool(settings.adzuna_app_id and settings.adzuna_app_key),
-        usajobs_configured=bool(settings.usajobs_user_agent and settings.usajobs_api_key),
-        jsearch_configured=bool(settings.jsearch_api_key),
-        usajobs_user_agent=settings.usajobs_user_agent,
+        ats_sources=ats,
+        companies_catalog=meta,
+        adzuna_configured=False,
+        usajobs_configured=False,
+        jsearch_configured=False,
+        usajobs_user_agent="",
+        scraper_sources=ats,
     )
 
 

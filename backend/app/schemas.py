@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Job(BaseModel):
@@ -19,6 +19,42 @@ class Job(BaseModel):
     salary_max: Optional[float] = None
     required_skills: List[str] = Field(default_factory=list)
     raw: Dict[str, Any] = Field(default_factory=dict)
+    remote: bool = False
+    job_type: str = ""
+    source_ats: str = ""
+    source_url: str = ""
+    requirements: str = ""
+    posted_date: Optional[str] = None
+    salary: Optional[str] = None
+
+
+def job_with_unified_api_fields(job: Job) -> Job:
+    """Populate portal-style unified fields without a model validator (avoids nested validation warnings)."""
+    data = job.model_dump()
+    raw = data.get("raw") or {}
+    jt = str(raw.get("employment_type") or raw.get("jobType") or raw.get("timeType") or data.get("job_type") or "full_time")
+    salary_val: Optional[str] = data.get("salary")
+    if salary_val is None and (data.get("salary_min") is not None or data.get("salary_max") is not None):
+        lo, hi = data.get("salary_min"), data.get("salary_max")
+        if lo is not None and hi is not None and lo != hi:
+            salary_val = f"{int(lo)}–{int(hi)}"
+        elif lo is not None:
+            salary_val = str(int(lo))
+        elif hi is not None:
+            salary_val = str(int(hi))
+    req = data.get("requirements") or (data.get("description") or "")[:2000]
+    data.update(
+        {
+            "source_ats": data.get("source_ats") or data.get("source"),
+            "source_url": data.get("source_url") or data.get("apply_url"),
+            "posted_date": data.get("posted_date") or data.get("posted_at"),
+            "remote": data.get("work_model") == "remote",
+            "job_type": jt,
+            "requirements": req,
+            "salary": salary_val,
+        }
+    )
+    return Job.model_validate(data)
 
 
 class CandidateProfile(BaseModel):
@@ -57,6 +93,8 @@ class IntegrationSettings(BaseModel):
 
 
 class IntegrationStatus(BaseModel):
+    ats_sources: List[str] = Field(default_factory=lambda: ["ashby", "greenhouse", "lever", "workday"])
+    companies_catalog: Dict[str, Any] = Field(default_factory=dict)
     adzuna_configured: bool = False
     usajobs_configured: bool = False
     jsearch_configured: bool = False
@@ -83,6 +121,13 @@ class MatchResult(BaseModel):
     matched_skills: List[str]
     missing_skills: List[str]
     explanation: str
+    why_fit: List[str] = Field(default_factory=list)
+    why_may_not_fit: List[str] = Field(default_factory=list)
+    title_match_score: float = 0.0
+    recency_score: float = 0.0
+    experience_fit_score: float = 0.0
+    structural_entity_score: float = 0.0
+    graph_feedback_multiplier: float = 1.0
     model_source: str = "skill_graph_ranker"
     gnn_score: float = 0.0
     semantic_score: float = 0.0
@@ -118,12 +163,34 @@ class AgentRequest(BaseModel):
     message: str
 
 
+class ApplicationJobSummary(BaseModel):
+    job_id: str
+    latest_status: str
+    latest_note: str = ""
+    applied_at: Optional[datetime] = None
+    reminder_at: Optional[datetime] = None
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    history_count: int = 0
+    job_title: str = ""
+    company: str = ""
+
+
 class ApplicationEvent(BaseModel):
+    id: Optional[int] = None
     candidate_id: str = "default"
     job_id: str
     status: str
     note: str = ""
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    applied_at: Optional[datetime] = None
+    reminder_at: Optional[datetime] = None
+
+    @field_validator("status")
+    @classmethod
+    def _normalize_status(cls, value: str) -> str:
+        from backend.app.tracking.statuses import normalize_application_status
+
+        return normalize_application_status(value)
 
 
 class AutofillProfile(BaseModel):

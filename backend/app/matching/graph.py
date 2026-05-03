@@ -27,10 +27,13 @@ def build_graph_snapshot(candidate: CandidateProfile, jobs: list[Job]) -> dict:
         add_node(graph_job_id, job.title, "job")
         company_id = f"company:{job.company.lower()}"
         location_id = f"location:{job.location.lower() or 'unknown'}"
+        ats_id = f"ats:{(job.source or 'unknown').lower()}"
         add_node(company_id, job.company, "company")
         add_node(location_id, job.location or "Unknown", "location")
+        add_node(ats_id, (job.source or "unknown").upper(), "ats")
         edges.append({"source": graph_job_id, "target": company_id, "type": "posted_by"})
         edges.append({"source": graph_job_id, "target": location_id, "type": "located_in"})
+        edges.append({"source": graph_job_id, "target": ats_id, "type": "hosted_on"})
 
         for skill in job.required_skills:
             skill_id = f"skill:{skill.lower()}"
@@ -45,5 +48,6 @@ def build_graph_snapshot(candidate: CandidateProfile, jobs: list[Job]) -> dict:
             "edges": len(edges),
             "jobs": len(jobs),
             "candidate_skills": len(candidate.skills),
+            "schema": "candidate_skills_jobs_company_location_ats",
         },
     }

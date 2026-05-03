@@ -1,0 +1,14 @@
+[
+  { "company": "Stripe", "ats": "greenhouse", "board": "stripe" },
+  { "company": "Netflix", "ats": "lever", "board": "netflix" },
+  { "company": "OpenAI", "ats": "ashby", "board": "openai" },
+  { "company": "Adobe", "ats": "workday", "url": "https://adobe.wd5.myworkdayjobs.com/external_experienced" },
+  { "company": "Ashby", "ats": "ashby", "board": "ashby" },
+  { "company": "Airbnb", "ats": "greenhouse", "board": "airbnb" },
+  { "company": "DoorDash", "ats": "greenhouse", "board": "doordash" },
+  { "company": "Reddit", "ats": "greenhouse", "board": "reddit" },
+  { "company": "Instacart", "ats": "greenhouse", "board": "instacart" },
+  { "company": "Databricks", "ats": "greenhouse", "board": "databricks" },
+  { "company": "Scale AI", "ats": "lever", "board": "scaleai" },
+  { "company": "Figma", "ats": "lever", "board": "figma" }
+]

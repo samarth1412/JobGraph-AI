@@ -81,6 +81,8 @@ def _build_graph(candidate: CandidateProfile, jobs: List[Job]) -> Dict[str, List
         job_node = _job_node(job)
         graph.setdefault(job_node, [])
         connect(job_node, _typed_node("company", job.company), 0.22)
+        if job.source:
+            connect(job_node, _typed_node("ats", job.source), 0.52)
         if job.location:
             connect(job_node, _typed_node("location", job.location), 0.38)
         if job.work_model:

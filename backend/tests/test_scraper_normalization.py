@@ -1,26 +1,4 @@
-from backend.app.ingestion.normalize import from_greenhouse, from_jobspy, from_lever, from_workday
-
-
-def test_from_jobspy_normalizes_board_result():
-    row = {
-        "site": "indeed",
-        "title": "Machine Learning Engineer",
-        "company": "Acme AI",
-        "city": "San Francisco",
-        "state": "CA",
-        "description": "Build Python, PyTorch, and React systems.",
-        "job_url": "https://www.indeed.com/viewjob?jk=123",
-        "min_amount": 120000,
-        "max_amount": 160000,
-    }
-
-    job = from_jobspy(row)
-
-    assert job.source == "jobspy_indeed"
-    assert job.company == "Acme AI"
-    assert job.apply_url.endswith("jk=123")
-    assert job.salary_min == 120000
-    assert "Python" in job.required_skills
+from backend.app.ingestion.normalize import from_greenhouse, from_lever, from_workday
 
 
 def test_from_greenhouse_normalizes_company_board_job():

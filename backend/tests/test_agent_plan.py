@@ -8,7 +8,19 @@ from backend.app.services import store
 def test_copilot_returns_tool_plan_for_explain():
     init_db()
     seed()
-    job = store.list_jobs()[0]
+    store.upsert_jobs(
+        [
+            Job(
+                job_id="greenhouse_explain_test",
+                source="greenhouse",
+                title="Machine Learning Engineer",
+                company="ExplainCo",
+                required_skills=["Python"],
+                apply_url="https://boards.greenhouse.io/explainco/jobs/1",
+            )
+        ]
+    )
+    job = store.get_job("greenhouse_explain_test")
 
     output = run_copilot("default", f"explain {job.job_id}")
 

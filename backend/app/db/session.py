@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.config import get_settings
@@ -23,8 +23,22 @@ def get_session_factory():
     return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
 
+def _sqlite_add_application_columns(engine) -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(applications)")).fetchall()
+        names = {row[1] for row in rows}
+        if "applied_at" not in names:
+            conn.execute(text("ALTER TABLE applications ADD COLUMN applied_at TIMESTAMP"))
+        if "reminder_at" not in names:
+            conn.execute(text("ALTER TABLE applications ADD COLUMN reminder_at TIMESTAMP"))
+
+
 def init_db() -> None:
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _sqlite_add_application_columns(engine)
 
 
 @contextmanager

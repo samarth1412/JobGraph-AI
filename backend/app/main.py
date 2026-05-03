@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-import importlib.util
 from pathlib import Path
-import sys
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
@@ -15,7 +13,7 @@ from backend.app.agents.copilot import run_copilot
 from backend.app.apply_agent.browser import cancel_apply_run, continue_apply_run, create_apply_run, execute_apply_run
 from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
-from backend.app.ingestion.sources import LEGACY_SOURCES, scraper_jobs
+from backend.app.ingestion.sources import ATS_SOURCES, scraper_jobs
 from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.graphsage import graphsage_affinity_scores
 from backend.app.matching.evaluation import evaluate_ranker
@@ -23,7 +21,7 @@ from backend.app.matching.ranker import rank_jobs
 from backend.app.matching.pytorch_gnn import load_pytorch_graphsage_metadata
 from backend.app.matching.trained_gnn import load_trained_ranker, train_graph_ranker
 from backend.app.mlops.metrics import system_metrics
-from backend.app.resume.parser import extract_text_from_pdf, parse_resume_text
+from backend.app.resume.parser import extract_text_from_docx, extract_text_from_pdf, parse_resume_text
 from backend.app.schemas import (
     AgentRequest,
     ApplyAgentRunRequest,
@@ -55,6 +53,8 @@ def root() -> Dict[str, Any]:
         "health": "/health",
         "matches": "/matches/default?k=10",
         "ingest": "POST /jobs/ingest",
+        "application_summary": "GET /applications/{candidate_id}/summary",
+        "application_history": "GET /applications/{candidate_id}/jobs/{job_id}/history",
     }
 
 
@@ -98,19 +98,14 @@ def recommendation_runs(candidate_id: str = "default", limit: int = 10) -> List[
 @app.get("/jobs/scraper-status")
 def scraper_status() -> Dict[str, Any]:
     from backend.app.core.config import get_settings
+    from backend.app.ingestion.companies_catalog import catalog_meta, load_merged_board_lists
 
     settings = get_settings()
+    boards = load_merged_board_lists(settings)
     return {
-        "jobspy_available": importlib.util.find_spec("jobspy") is not None,
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "jobspy_requires": "Python 3.10+",
         "sources": ["ashby", "greenhouse", "lever", "workday"],
-        "configured_ats": {
-            "ashby": [board.strip() for board in settings.ashby_job_boards.split(",") if board.strip()],
-            "greenhouse": [board.strip() for board in settings.greenhouse_boards.split(",") if board.strip()],
-            "lever": [company.strip() for company in settings.lever_companies.split(",") if company.strip()],
-            "workday": [board.strip() for board in settings.workday_boards.split(",") if board.strip()],
-        },
+        "companies_catalog": catalog_meta(settings),
+        "configured_ats": boards,
     }
 
 
@@ -130,17 +125,15 @@ def clear_integration_settings() -> Dict[str, Any]:
 
 
 @app.get("/jobs")
-def list_jobs(include_legacy: bool = False) -> List[Dict[str, Any]]:
-    jobs = store.list_jobs()
-    if not include_legacy:
-        jobs = scraper_jobs(jobs)
+def list_jobs() -> List[Dict[str, Any]]:
+    jobs = scraper_jobs(store.list_jobs())
     return [job.model_dump() for job in jobs]
 
 
 @app.delete("/jobs/legacy")
 def delete_legacy_jobs() -> Dict[str, Any]:
-    deleted = store.delete_jobs_by_sources(sorted(LEGACY_SOURCES))
-    return {"deleted": deleted, "sources": sorted(LEGACY_SOURCES)}
+    deleted = store.delete_jobs_not_in_sources(sorted(ATS_SOURCES))
+    return {"deleted": deleted, "allowed_sources": sorted(ATS_SOURCES)}
 
 
 @app.get("/jobs/{job_id}")
@@ -170,7 +163,8 @@ async def recommend_from_resume(
     ingestion = _ingest_for_profile(profile, query=search_query, location=search_location, k=k) if ingest else {"requested": False}
     jobs = scraper_jobs(store.list_jobs())
     _scores, diagnostics = graphsage_affinity_scores(profile, jobs)
-    matches = rank_jobs(profile, jobs, k=k)
+    events = store.list_applications(candidate_id)
+    matches = rank_jobs(profile, jobs, k=k, application_events=events)
     model_source = matches[0].model_source if matches else "hybrid_skill_semantic_graphsage_ranker_v3"
     parsed_resume = _parsed_resume_summary(profile, search_query, search_location)
     gnn_diagnostics = {
@@ -204,12 +198,17 @@ async def recommend_from_resume(
 
 
 async def _profile_from_upload(file: UploadFile, candidate_id: str) -> CandidateProfile:
-    suffix = Path(file.filename or "resume.pdf").suffix
+    suffix = Path(file.filename or "resume.pdf").suffix.lower()
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = Path(tmp.name)
     try:
-        text = extract_text_from_pdf(tmp_path) if suffix.lower() == ".pdf" else tmp_path.read_text(encoding="utf-8", errors="ignore")
+        if suffix == ".pdf":
+            text = extract_text_from_pdf(tmp_path)
+        elif suffix == ".docx":
+            text = extract_text_from_docx(tmp_path)
+        else:
+            text = tmp_path.read_text(encoding="utf-8", errors="ignore")
         return parse_resume_text(text, candidate_id=candidate_id)
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -273,7 +272,8 @@ def get_candidate(candidate_id: str = "default") -> Dict[str, Any]:
 def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
     candidate = store.get_candidate(candidate_id)
     jobs = scraper_jobs(store.list_jobs())
-    matches = rank_jobs(candidate, jobs, k=k)
+    events = store.list_applications(candidate_id)
+    matches = rank_jobs(candidate, jobs, k=k, application_events=events)
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
 
@@ -344,18 +344,28 @@ def cancel_apply_agent_run(run_id: int) -> Dict[str, Any]:
 
 @app.post("/applications")
 def track_application(event: ApplicationEvent) -> Dict[str, Any]:
-    store.save_application(event)
-    candidate = store.get_candidate(event.candidate_id)
+    saved = store.save_application(event)
+    candidate = store.get_candidate(saved.candidate_id)
     jobs = scraper_jobs(store.list_jobs())
-    events = store.list_applications(event.candidate_id)
+    events = store.list_applications(saved.candidate_id)
     training = train_graph_ranker(candidate, jobs, events)
     evaluation = evaluate_ranker(candidate, jobs, events, k=10)
-    return {"stored": True, "event": event.model_dump(), "training": training, "evaluation": evaluation}
+    return {"stored": True, "event": saved.model_dump(), "training": training, "evaluation": evaluation}
 
 
 @app.get("/applications/{candidate_id}")
 def applications(candidate_id: str) -> List[Dict[str, Any]]:
     return [event.model_dump() for event in store.list_applications(candidate_id)]
+
+
+@app.get("/applications/{candidate_id}/summary")
+def application_summaries(candidate_id: str) -> List[Dict[str, Any]]:
+    return [row.model_dump() for row in store.list_application_summaries(candidate_id)]
+
+
+@app.get("/applications/{candidate_id}/jobs/{job_id}/history")
+def application_job_history(candidate_id: str, job_id: str) -> List[Dict[str, Any]]:
+    return [event.model_dump() for event in store.list_application_history(candidate_id, job_id)]
 
 
 @app.put("/autofill/{candidate_id}")

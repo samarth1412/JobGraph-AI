@@ -27,6 +27,16 @@ def extract_text_from_pdf(path: Path) -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
+def extract_text_from_docx(path: Path) -> str:
+    try:
+        from docx import Document
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError("python-docx is required for .docx resumes. Install with `pip install python-docx`.") from exc
+    document = Document(str(path))
+    paragraphs = [p.text for p in document.paragraphs if p.text]
+    return "\n".join(paragraphs)
+
+
 def parse_resume_text(text: str, candidate_id: str = "default") -> CandidateProfile:
     cleaned = _clean_resume_text(text)
     llm_profile = _parse_with_openai(cleaned, candidate_id)

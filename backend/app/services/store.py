@@ -4,7 +4,19 @@ from typing import List, Optional
 
 from backend.app.db import repository
 from backend.app.db.session import session_scope
-from backend.app.schemas import ApplicationEvent, ApplyAgentRun, ApplySession, AutofillProfile, CandidateProfile, IngestionRun, IntegrationSettings, IntegrationStatus, Job, RecommendationRun
+from backend.app.schemas import (
+    ApplicationEvent,
+    ApplicationJobSummary,
+    ApplyAgentRun,
+    ApplySession,
+    AutofillProfile,
+    CandidateProfile,
+    IngestionRun,
+    IntegrationSettings,
+    IntegrationStatus,
+    Job,
+    RecommendationRun,
+)
 
 
 def upsert_jobs(jobs: List[Job]) -> List[Job]:
@@ -20,6 +32,11 @@ def list_jobs() -> List[Job]:
 def delete_jobs_by_sources(sources: List[str]) -> int:
     with session_scope() as session:
         return repository.delete_jobs_by_sources(session, sources)
+
+
+def delete_jobs_not_in_sources(allowed_sources: List[str]) -> int:
+    with session_scope() as session:
+        return repository.delete_jobs_not_in_sources(session, allowed_sources)
 
 
 def get_job(job_id: str) -> Job:
@@ -45,6 +62,26 @@ def save_application(event: ApplicationEvent) -> ApplicationEvent:
 def list_applications(candidate_id: str) -> List[ApplicationEvent]:
     with session_scope() as session:
         return repository.list_applications(session, candidate_id)
+
+
+def list_application_summaries(candidate_id: str) -> List[ApplicationJobSummary]:
+    with session_scope() as session:
+        summaries = repository.list_application_summaries(session, candidate_id)
+        enriched: List[ApplicationJobSummary] = []
+        for item in summaries:
+            title, company = "", ""
+            try:
+                job = repository.get_job(session, item.job_id)
+                title, company = job.title, job.company
+            except KeyError:
+                pass
+            enriched.append(item.model_copy(update={"job_title": title, "company": company}))
+        return enriched
+
+
+def list_application_history(candidate_id: str, job_id: str) -> List[ApplicationEvent]:
+    with session_scope() as session:
+        return repository.list_application_history_for_job(session, candidate_id, job_id)
 
 
 def save_autofill(profile: AutofillProfile) -> AutofillProfile:

@@ -7,6 +7,7 @@ from backend.app.schemas import Job
 
 SEARCH_SOURCES = ["ashby", "greenhouse", "lever", "workday"]
 ATS_SOURCES = {"ashby", "greenhouse", "lever", "workday"}
+# Historical rows in local DB from removed providers (used by cleanup endpoint copy).
 LEGACY_SOURCES = {"adzuna", "usajobs", "jsearch", "demo"}
 
 

@@ -55,6 +55,8 @@ class ApplicationRecord(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     note: Mapped[str] = mapped_column(Text, default="")
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reminder_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class AutofillRecord(Base):

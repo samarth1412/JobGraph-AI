@@ -102,13 +102,9 @@ def _feature_matrix(candidate: CandidateProfile, jobs: List[Job]) -> np.ndarray:
 
 
 def _labels_from_events(events: List[ApplicationEvent]) -> Dict[str, float]:
-    labels: Dict[str, float] = {}
-    for event in events:
-        if event.status in POSITIVE_EVENTS:
-            labels[event.job_id] = max(labels.get(event.job_id, 0.0), POSITIVE_EVENTS[event.status])
-        if event.status in NEGATIVE_EVENTS and event.job_id not in labels:
-            labels[event.job_id] = NEGATIVE_EVENTS[event.status]
-    return labels
+    from backend.app.matching.feedback_events import latest_job_feedback_labels
+
+    return latest_job_feedback_labels(events)
 
 
 def _sigmoid(value):
