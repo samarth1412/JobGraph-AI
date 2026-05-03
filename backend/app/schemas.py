@@ -26,11 +26,17 @@ class CandidateProfile(BaseModel):
     name: str = ""
     email: str = ""
     phone: str = ""
+    summary: str = ""
     location_preferences: List[str] = Field(default_factory=list)
     target_roles: List[str] = Field(default_factory=list)
     skills: List[str] = Field(default_factory=list)
     projects: List[str] = Field(default_factory=list)
+    experience: List[Dict[str, Any]] = Field(default_factory=list)
+    education: List[Dict[str, Any]] = Field(default_factory=list)
+    certifications: List[str] = Field(default_factory=list)
     experience_years: float = 0
+    work_authorization: str = ""
+    sponsorship_required: str = ""
     links: Dict[str, str] = Field(default_factory=dict)
 
 

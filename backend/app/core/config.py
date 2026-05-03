@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     usajobs_api_key: str = ""
     jsearch_api_key: str = ""
     openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     database_url: str = "sqlite:///./jobgraph.db"
     jobspy_sites: str = "indeed,linkedin,zip_recruiter,google"
     jobspy_hours_old: int = 168

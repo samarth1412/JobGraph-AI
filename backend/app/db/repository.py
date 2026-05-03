@@ -47,21 +47,40 @@ def record_to_job(record: JobRecord) -> Job:
 
 
 def candidate_to_record(profile: CandidateProfile) -> CandidateRecord:
-    return CandidateRecord(**profile.model_dump())
+    return CandidateRecord(
+        candidate_id=profile.candidate_id,
+        name=profile.name,
+        email=profile.email,
+        phone=profile.phone,
+        location_preferences=profile.location_preferences,
+        target_roles=profile.target_roles,
+        skills=profile.skills,
+        projects=profile.projects,
+        experience_years=profile.experience_years,
+        links=_links_with_structured_profile(profile),
+    )
 
 
 def record_to_candidate(record: CandidateRecord) -> CandidateProfile:
+    links = dict(record.links or {})
+    structured = dict(links.pop("_structured_profile", {}) or {})
     return CandidateProfile(
         candidate_id=record.candidate_id,
         name=record.name,
         email=record.email,
         phone=record.phone,
+        summary=structured.get("summary", ""),
         location_preferences=list(record.location_preferences or []),
         target_roles=list(record.target_roles or []),
         skills=list(record.skills or []),
         projects=list(record.projects or []),
+        experience=list(structured.get("experience", []) or []),
+        education=list(structured.get("education", []) or []),
+        certifications=list(structured.get("certifications", []) or []),
         experience_years=record.experience_years,
-        links=dict(record.links or {}),
+        work_authorization=structured.get("work_authorization", ""),
+        sponsorship_required=structured.get("sponsorship_required", ""),
+        links=links,
     )
 
 
@@ -74,6 +93,9 @@ def autofill_from_candidate(profile: CandidateProfile) -> AutofillProfile:
         linkedin=profile.links.get("linkedin", ""),
         github=profile.links.get("github", ""),
         portfolio=profile.links.get("portfolio", ""),
+        work_authorization=profile.work_authorization,
+        sponsorship_required=profile.sponsorship_required,
+        education=profile.education[0] if profile.education else {},
     )
 
 
@@ -125,7 +147,8 @@ def get_job(session: Session, job_id: str) -> Job:
 
 def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProfile:
     existing = session.get(CandidateRecord, profile.candidate_id)
-    payload = profile.model_dump()
+    payload = candidate_to_record(profile).__dict__
+    payload.pop("_sa_instance_state", None)
     if existing:
         for key, value in payload.items():
             setattr(existing, key, value)
@@ -142,7 +165,26 @@ def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProf
             incoming = getattr(candidate_autofill, key)
             if incoming and not current:
                 setattr(autofill, key, incoming)
+        for key in ("work_authorization", "sponsorship_required"):
+            incoming = getattr(candidate_autofill, key)
+            if incoming:
+                setattr(autofill, key, incoming)
+        if candidate_autofill.education:
+            autofill.education = candidate_autofill.education
     return profile
+
+
+def _links_with_structured_profile(profile: CandidateProfile) -> dict:
+    links = dict(profile.links or {})
+    links["_structured_profile"] = {
+        "summary": profile.summary,
+        "experience": profile.experience,
+        "education": profile.education,
+        "certifications": profile.certifications,
+        "work_authorization": profile.work_authorization,
+        "sponsorship_required": profile.sponsorship_required,
+    }
+    return links
 
 
 def get_candidate(session: Session, candidate_id: str) -> CandidateProfile:
