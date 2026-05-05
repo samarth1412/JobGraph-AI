@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useRedirectToUploadOnReload } from "../../../lib/useRedirectToUploadOnReload";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
 
@@ -18,6 +19,7 @@ type ApplicationEvent = {
 };
 
 export default function JobApplicationHistoryPage() {
+  useRedirectToUploadOnReload();
   const params = useParams();
   const jobId = decodeURIComponent(String(params.jobId || ""));
   const [events, setEvents] = useState<ApplicationEvent[]>([]);

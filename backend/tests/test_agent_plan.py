@@ -62,6 +62,8 @@ def test_copilot_keyword_gap_and_apply_plans():
 
     keyword_output = run_copilot("default", "what keywords am I missing for greenhouse_apply_test")
     apply_output = run_copilot("default", "apply to greenhouse_apply_test")
+    
+    
 
     assert keyword_output["plan"][-1]["tool"] == "analyze_keyword_gaps"
     assert "missing_keywords" in keyword_output["result"]

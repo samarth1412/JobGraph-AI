@@ -22,9 +22,74 @@ SECTION_ALIASES = {
 }
 
 
+def extract_pdf_hyperlink_uris(path: Path) -> List[str]:
+    """Collect visible hyperlink targets from PDF annotations (icons often hide URLs from extract_text)."""
+    out: List[str] = []
+    try:
+        reader = PdfReader(str(path), strict=False)
+        for page in reader.pages or []:
+            annots = getattr(page, "annotations", None)
+            if annots is None:
+                try:
+                    ref = page.get("/Annots")
+                    if ref:
+                        annots = list(ref)
+                except Exception:
+                    annots = None
+            if not annots:
+                continue
+            for annot_ref in annots:
+                try:
+                    obj = annot_ref.get_object() if hasattr(annot_ref, "get_object") else annot_ref
+                    if not isinstance(obj, dict):
+                        continue
+                    if str(obj.get("/Subtype")) != "/Link":
+                        continue
+                    action = obj.get("/A")
+                    if action is None:
+                        continue
+                    act = action.get_object() if hasattr(action, "get_object") else action
+                    if not isinstance(act, dict):
+                        continue
+                    uri = act.get("/URI")
+                    if uri:
+                        s = str(uri).strip().strip("\x00")
+                        if s.startswith(("http://", "https://")):
+                            out.append(s)
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    seen = set()
+    uniq: List[str] = []
+    for u in out:
+        key = u.lower().rstrip("/")
+        if key not in seen:
+            seen.add(key)
+            uniq.append(u)
+    return uniq
+
+
 def extract_text_from_pdf(path: Path) -> str:
-    reader = PdfReader(str(path))
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    # Some PDFs (especially scanned/optimized exports) can cause pypdf to be very slow or error.
+    # We keep this extraction best-effort and bounded to avoid hanging the upload request.
+    try:
+        reader = PdfReader(str(path), strict=False)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read PDF: {exc}") from exc
+
+    pages = list(reader.pages or [])
+    max_pages = 20
+    chunks: List[str] = []
+    for page in pages[:max_pages]:
+        try:
+            chunks.append(page.extract_text() or "")
+        except Exception:
+            continue
+    text = "\n".join(chunks).strip()
+    if not text and pages:
+        raise RuntimeError("PDF contains no extractable text (may be scanned). Try uploading a DOCX or TXT resume.")
+    return text
 
 
 def extract_text_from_docx(path: Path) -> str:
@@ -104,7 +169,7 @@ def _heuristic_profile(text: str, candidate_id: str) -> CandidateProfile:
     skills = _ordered_unique(extract_skills(text) + _skills_from_section(sections.get("skills", "")))
     name = _candidate_name(text, email_match.group(0) if email_match else "")
     roles = _infer_target_roles(text, skills)
-    projects = _section_bullets(sections.get("projects", ""))[:8]
+    projects = _project_items(sections.get("projects", ""))[:6]
     experience = _experience_entries(sections.get("experience", ""))
     education = _education_entries(sections.get("education", ""))
     certifications = _section_bullets(sections.get("certifications", ""))[:8]
@@ -154,16 +219,25 @@ def _clean_resume_text(text: str) -> str:
 
 
 def _extract_links(text: str) -> Dict[str, str]:
+    """Pull profile URLs from plain text + hyperlink dumps (case variants, trailing punctuation)."""
     links: Dict[str, str] = {}
-    patterns = {
-        "linkedin": r"https?://(?:www\.)?linkedin\.com/[^\s)]+",
-        "github": r"https?://(?:www\.)?github\.com/[^\s)]+",
-        "portfolio": r"https?://[^\s)]+",
-    }
-    for label, pattern in patterns.items():
-        match = re.search(pattern, text, flags=re.I)
-        if match and label not in links:
-            links[label] = match.group(0).rstrip(".,")
+
+    li = re.search(r"https?://(?:www\.)?linkedin\.com/[^\s\)<>\"]+", text, flags=re.I)
+    if li:
+        links["linkedin"] = li.group(0).rstrip(".,);")
+
+    gh = re.search(r"https?://(?:www\.)?github\.com/[^\s\)<>\"]+", text, flags=re.I)
+    if gh:
+        links["github"] = gh.group(0).rstrip(".,);")
+
+    for m in re.finditer(r"https?://[^\s\)<>\"]+", text, flags=re.I):
+        url = m.group(0).rstrip(".,);")
+        low = url.lower()
+        if "linkedin.com" in low or "github.com" in low:
+            continue
+        links.setdefault("portfolio", url)
+        break
+
     return links
 
 
@@ -204,6 +278,51 @@ def _section_bullets(section: str) -> List[str]:
         if len(cleaned) > 8:
             bullets.append(cleaned)
     return bullets
+
+
+def _project_items(section: str) -> List[str]:
+    items: List[str] = []
+    current = ""
+    for raw in section.splitlines():
+        line = _clean_bullet_text(raw)
+        if not _good_resume_line(line):
+            continue
+        is_bullet = bool(re.match(r"^\s*[-*•]", raw.replace("â€¢", "•")))
+        if not is_bullet and (len(line.split()) <= 9 or re.search(r"[:|]", line)):
+            if current:
+                items.append(_polish_project(current))
+            current = line
+            continue
+        if current:
+            current = f"{current}: {line}" if ":" not in current else f"{current}; {line}"
+        else:
+            current = line
+    if current:
+        items.append(_polish_project(current))
+    return _ordered_unique([item for item in items if item])
+
+
+def _clean_bullet_text(line: str) -> str:
+    cleaned = re.sub(r"^[\-*•\s]+", "", line.replace("â€¢", "•")).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -|")
+
+
+def _good_resume_line(line: str) -> bool:
+    if len(line) < 8 or len(line) > 360:
+        return False
+    lowered = line.lower().strip(":")
+    if any(lowered == alias for aliases in SECTION_ALIASES.values() for alias in aliases):
+        return False
+    if "@" in line and len(line.split()) <= 4:
+        return False
+    return True
+
+
+def _polish_project(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip(" -;")
+    cleaned = re.sub(r"^(project|projects)\s*[:|-]\s*", "", cleaned, flags=re.I)
+    return cleaned[:260].rstrip(" ,;")
 
 
 def _experience_entries(section: str) -> List[Dict[str, Any]]:
@@ -304,8 +423,37 @@ def _normalize_profile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
             normalized[key] = []
         elif isinstance(value, str):
             normalized[key] = [item.strip() for item in re.split(r"[,;\n]", value) if item.strip()]
+    normalized["projects"] = _normalize_project_payload(normalized.get("projects") or [])
     normalized["links"] = normalized.get("links") if isinstance(normalized.get("links"), dict) else {}
     return normalized
+
+
+def _normalize_project_payload(value: Any) -> List[str]:
+    result: List[str] = []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    for item in value:
+        if isinstance(item, dict):
+            title = str(item.get("name") or item.get("title") or "").strip()
+            description = str(item.get("description") or item.get("summary") or "").strip()
+            technologies = item.get("technologies") or item.get("skills") or []
+            if isinstance(technologies, list):
+                tech_text = ", ".join(str(t).strip() for t in technologies if str(t).strip())
+            else:
+                tech_text = str(technologies or "").strip()
+            text = title
+            if description:
+                text = f"{text}: {description}" if text else description
+            if tech_text:
+                text = f"{text} (Tech: {tech_text})" if text else f"Tech: {tech_text}"
+        else:
+            text = str(item or "")
+        polished = _polish_project(text)
+        if polished:
+            result.append(polished)
+    return _ordered_unique(result)[:8]
 
 
 def _ordered_unique(values: List[str]) -> List[str]:

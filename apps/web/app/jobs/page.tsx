@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Building2, MapPin, SlidersHorizontal } from "lucide-react";
+import { CompanyLogo } from "../../components/CompanyLogo";
+import { useRedirectToUploadOnReload } from "../lib/useRedirectToUploadOnReload";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
 
@@ -11,6 +13,7 @@ type Job = {
   source: string;
   title: string;
   company: string;
+  company_logo_url?: string;
   location: string;
   work_model: string;
   apply_url: string;
@@ -22,6 +25,7 @@ type Match = {
   matched_skills: string[];
   missing_skills: string[];
   explanation: string;
+  graph_paths?: string[];
   why_fit?: string[];
   why_may_not_fit?: string[];
 };
@@ -29,6 +33,7 @@ type Match = {
 const ATS = ["ashby", "greenhouse", "lever", "workday"] as const;
 
 export default function JobsPage() {
+  useRedirectToUploadOnReload();
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -41,7 +46,7 @@ export default function JobsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API}/matches/default?k=80`, { cache: "no-store" });
+        const res = await fetch(`${API}/matches/default?k=40`, { cache: "no-store" });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         setMatches(data.matches || []);
@@ -127,12 +132,13 @@ export default function JobsPage() {
           <p className="text-zinc-500">Loading matches…</p>
         ) : (
           <ul className="space-y-3">
-            {filtered.map((m) => (
+            {filtered.map((m, index) => (
               <li key={m.job.job_id}>
                 <Link
                   href={`/jobs/${encodeURIComponent(m.job.job_id)}`}
                   className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#171717] p-4 transition hover:border-[#b58cf4]/40 sm:flex-row sm:items-center sm:justify-between"
                 >
+                  <CompanyLogo name={m.job.company} logoUrl={m.job.company_logo_url} index={index} className="sm:mr-1" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold uppercase text-zinc-300">{m.job.source}</span>
@@ -151,8 +157,8 @@ export default function JobsPage() {
                     </p>
                   </div>
                   <div className="text-right text-xs text-zinc-500">
-                    {m.matched_skills.slice(0, 4).join(", ")}
-                    {m.matched_skills.length > 4 ? "…" : ""}
+                    <span className="block font-semibold uppercase text-zinc-600">{m.job.source}</span>
+                    <span>{(m.why_fit?.[0] || m.matched_skills.slice(0, 4).join(", ")).slice(0, 90)}</span>
                   </div>
                 </Link>
               </li>

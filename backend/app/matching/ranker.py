@@ -43,6 +43,25 @@ def _experience_fit(candidate_years: float, job: Job) -> float:
     return max(0.18, min(1.0, candidate_years / max(required, 1.0)))
 
 
+def _location_fit(candidate: CandidateProfile, job: Job) -> float:
+    if not candidate.location_preferences:
+        return 0.72
+    job_location = (job.location or "").lower()
+    work_model = (job.work_model or "").lower()
+    preferences = [loc.lower() for loc in candidate.location_preferences if loc]
+    if "remote" in work_model and any("remote" in loc for loc in preferences):
+        return 1.0
+    if any(loc in job_location or job_location in loc for loc in preferences if loc and job_location):
+        return 1.0
+    if any(loc in ("united states", "usa", "us") for loc in preferences) and job_location:
+        return 0.78
+    return 0.38
+
+
+def _location_experience_fit(candidate: CandidateProfile, job: Job, exp_fit: float) -> float:
+    return 0.55 * _location_fit(candidate, job) + 0.45 * exp_fit
+
+
 def _build_why_lists(
     job: Job,
     matched: List[str],
@@ -79,6 +98,23 @@ def _build_why_lists(
     return why_fit, why_not
 
 
+def _shared_graph_paths(candidate: CandidateProfile, job: Job, matched: List[str], location_fit: float, exp_fit: float) -> List[str]:
+    paths: List[str] = []
+    for skill in matched[:5]:
+        paths.append(f"Candidate -HAS_SKILL-> {skill} <-REQUIRES_SKILL- Job")
+    if location_fit >= 0.75 and (job.location or candidate.location_preferences):
+        location = job.location or candidate.location_preferences[0]
+        paths.append(f"Candidate -PREFERS-> {location} <-LOCATED_IN- Job")
+    for role in candidate.target_roles[:3]:
+        if role.lower() in job.title.lower():
+            paths.append(f"Candidate -TARGETS_ROLE-> {role} <-TITLE_MATCH- Job")
+    if exp_fit >= 0.75:
+        paths.append("Candidate -HAS_EXPERIENCE_LEVEL-> compatible level <-REQUIRES_EXPERIENCE_LEVEL- Job")
+    if job.company:
+        paths.append(f"Job -POSTED_BY-> {job.company}")
+    return paths[:8]
+
+
 def rank_jobs(
     candidate: CandidateProfile,
     jobs: List[Job],
@@ -86,11 +122,13 @@ def rank_jobs(
     application_events: Optional[List[ApplicationEvent]] = None,
 ) -> List[MatchResult]:
     application_events = application_events or []
+    jobs = _prefilter_jobs(candidate, jobs, k)
     struct_entity, feedback_mult, struct_combined, _struct_meta = combined_structural_feedback_vector(candidate, jobs, application_events)
     candidate_skills = {skill.lower(): skill for skill in candidate.skills}
     semantic = semantic_scores(candidate, jobs)
     graph_affinity, _diagnostics = graphsage_affinity_scores(candidate, jobs)
     learned_scores, model_source = trained_scores(candidate, jobs)
+    learned_scores = learned_scores or []
     if application_events and any(struct_entity):
         if model_source == "hybrid_skill_semantic_graphsage_ranker_v3":
             model_source = "entity_graph_skill_graphsage_feedback_v1"
@@ -104,25 +142,25 @@ def rank_jobs(
         location_bonus = 0.08 if any(loc.lower() in job.location.lower() for loc in candidate.location_preferences) else 0.0
         skill_score = len(matched_keys) / max(len(required), 1)
         semantic_score = semantic[index] if index < len(semantic) else 0.0
-        graph_score = graph_affinity[index] if index < len(graph_affinity) else 0.0
+        graph_score = learned_scores[index] if index < len(learned_scores) else (graph_affinity[index] if index < len(graph_affinity) else 0.0)
         title_frac = _title_match_fraction(candidate, job.title)
         recency = _recency_score(job.posted_at)
         exp_fit = _experience_fit(candidate.experience_years, job)
+        loc_fit = _location_fit(candidate, job)
+        location_exp_fit = _location_experience_fit(candidate, job, exp_fit)
         struct_signal = struct_combined[index] if index < len(struct_combined) else 0.0
 
-        base_score = min(
+        # Required production formula:
+        # 40% GNN/graph score, 35% skill overlap, 15% semantic similarity,
+        # 10% location/experience fit. Secondary signals only shape explanations
+        # and the graph score upstream; they do not add hidden weight here.
+        score = min(
             1.0,
-            0.27 * skill_score
-            + 0.12 * semantic_score
-            + 0.18 * graph_score
-            + 0.10 * title_frac
-            + 0.07 * recency
-            + 0.07 * exp_fit
-            + 0.07 * struct_signal
-            + role_bonus
-            + location_bonus,
+            0.40 * graph_score
+            + 0.35 * skill_score
+            + 0.15 * semantic_score
+            + 0.10 * location_exp_fit,
         )
-        score = (0.58 * base_score + 0.42 * learned_scores[index]) if learned_scores else base_score
         matched = [required[key] for key in matched_keys]
         missing = [required[key] for key in missing_keys]
         why_fit, why_may_not_fit = _build_why_lists(job, matched, missing, title_frac, recency, exp_fit, role_bonus, location_bonus)
@@ -144,6 +182,14 @@ def rank_jobs(
             struct_entity[index] if index < len(struct_entity) else 0.0,
             feedback_mult[index] if index < len(feedback_mult) else 1.0,
         )
+        graph_paths = _shared_graph_paths(candidate, job, matched, loc_fit, exp_fit)
+        score_breakdown = {
+            "gnn_graph": round(graph_score * 100, 1),
+            "skill_match": round(skill_score * 100, 1),
+            "semantic_similarity": round(semantic_score * 100, 1),
+            "location_experience_fit": round(location_exp_fit * 100, 1),
+            "final_weighted_match": round(score * 100, 1),
+        }
         results.append(
             MatchResult(
                 job=job,
@@ -151,6 +197,8 @@ def rank_jobs(
                 matched_skills=matched,
                 missing_skills=missing,
                 explanation=explanation,
+                graph_paths=graph_paths,
+                score_breakdown=score_breakdown,
                 why_fit=why_fit,
                 why_may_not_fit=why_may_not_fit,
                 title_match_score=round(title_frac * 100, 1),
@@ -162,10 +210,34 @@ def rank_jobs(
                 gnn_score=round(graph_score * 100, 1),
                 semantic_score=round(semantic_score * 100, 1),
                 skill_overlap_score=round(skill_score * 100, 1),
+                location_experience_fit_score=round(location_exp_fit * 100, 1),
             )
         )
 
     return sorted(results, key=lambda item: item.score, reverse=True)[:k]
+
+
+def _prefilter_jobs(candidate: CandidateProfile, jobs: List[Job], k: int) -> List[Job]:
+    if k >= len(jobs):
+        return jobs
+    max_pool = max(120, min(280, k * 6))
+    if len(jobs) <= max_pool:
+        return jobs
+    candidate_skills = {skill.lower() for skill in candidate.skills}
+    roles = [role.lower() for role in candidate.target_roles]
+    locations = [loc.lower() for loc in candidate.location_preferences]
+
+    def cheap_score(job: Job) -> float:
+        required = {skill.lower() for skill in job.required_skills}
+        skill = len(candidate_skills & required) / max(len(required), 1)
+        title = 1.0 if any(role and role in job.title.lower() for role in roles) else _title_match_fraction(candidate, job.title)
+        location = _location_fit(candidate, job)
+        ats = 1.0 if (job.source or "").lower() in {"ashby", "greenhouse", "lever", "workday"} else 0.0
+        has_apply_url = 1.0 if job.apply_url else 0.0
+        has_location_pref = 1.0 if any(loc and loc in (job.location or "").lower() for loc in locations) else 0.0
+        return 0.44 * skill + 0.25 * title + 0.16 * location + 0.08 * ats + 0.04 * has_apply_url + 0.03 * has_location_pref
+
+    return [job for job, _score in sorted(((job, cheap_score(job)) for job in jobs), key=lambda item: item[1], reverse=True)[:max_pool]]
 
 
 def explain_short(
@@ -181,7 +253,7 @@ def explain_short(
     feedback_multiplier: float = 1.0,
 ) -> str:
     parts = [
-        f"Composite score {round(score * 100)} blends skill overlap, semantics, a local message-passing graph signal (not a separately trained production GNN), title overlap ({round(title_frac * 100)}%), recency, experience fit, and a small deterministic entity-graph boost ({round(structural_entity * 100)}%).",
+        f"Final match {round(score * 100)}% uses the configured weights: 40% GNN/graph signal, 35% skill overlap, 15% semantic resume-job similarity, and 10% location/experience fit.",
     ]
     if matched:
         parts.append(f"{len(matched)} skills aligned with the posting.")

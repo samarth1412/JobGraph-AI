@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Bell, ExternalLink } from "lucide-react";
+import { useRedirectToUploadOnReload } from "../lib/useRedirectToUploadOnReload";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
 
@@ -26,6 +27,7 @@ function statusRank(s: string) {
 }
 
 export default function TrackerPage() {
+  useRedirectToUploadOnReload();
   const [rows, setRows] = useState<ApplicationSummary[]>([]);
   const [loading, setLoading] = useState(true);
 

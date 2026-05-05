@@ -17,7 +17,7 @@ def candidate_document(candidate: CandidateProfile) -> str:
             " ".join(candidate.projects),
             " ".join(candidate.location_preferences),
         ]
-    )
+    )[:6000]
 
 
 def job_document(job: Job) -> str:
@@ -27,7 +27,7 @@ def job_document(job: Job) -> str:
             job.company,
             job.location,
             job.work_model,
-            job.description,
+            job.description[:3000],
             " ".join(job.required_skills),
         ]
     )

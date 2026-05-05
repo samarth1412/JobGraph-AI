@@ -23,6 +23,10 @@ def test_field_mapper_matches_resume_profile_fields():
 def test_field_mapper_handles_boolean_options_and_ats_detection():
     assert boolean_choice("Yes", "Yes, I am authorized to work")
     assert boolean_choice("No", "No, I will not need sponsorship")
-    assert adapter_for_url("https://boards.greenhouse.io/example/jobs/123").name == "greenhouse"
+    gh = adapter_for_url("https://boards.greenhouse.io/example/jobs/123")
+    assert gh.name == "greenhouse"
+    assert len(gh.extra_apply_selectors) > 0
     assert adapter_for_url("https://jobs.lever.co/example/123").name == "lever"
+    assert adapter_for_url("https://jobs.ashbyhq.com/example/123").name == "ashby"
+    assert adapter_for_url("https://example.myworkdayjobs.com/careers").name == "workday"
     assert adapter_for_url("https://company.example/apply").name == "generic"

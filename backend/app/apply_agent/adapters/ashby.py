@@ -1,3 +1,8 @@
-from backend.app.apply_agent.adapters.generic import AtsAdapter
+"""Ashby-hosted apply flows."""
 
-ADAPTER = AtsAdapter(name="ashby")
+EXTRA_APPLY_SELECTORS = (
+    "button:has-text('Apply')",
+    "a:has-text('Apply')",
+    "button:has-text('Apply for this role')",
+    "a:has-text('Apply for this role')",
+)

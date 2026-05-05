@@ -7,12 +7,14 @@ from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, File, UploadFile
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agents.copilot import run_copilot
 from backend.app.apply_agent.browser import cancel_apply_run, continue_apply_run, create_apply_run, execute_apply_run
 from backend.app.db.session import init_db
 from backend.app.ingestion.clients import JobIngestionClient
+from backend.app.ingestion.companies_catalog import catalog_meta, load_company_entries, load_merged_board_lists, resolve_catalog_path
 from backend.app.ingestion.sources import ATS_SOURCES, scraper_jobs
 from backend.app.matching.graph import build_graph_snapshot
 from backend.app.matching.graphsage import graphsage_affinity_scores
@@ -21,7 +23,12 @@ from backend.app.matching.ranker import rank_jobs
 from backend.app.matching.pytorch_gnn import load_pytorch_graphsage_metadata
 from backend.app.matching.trained_gnn import load_trained_ranker, train_graph_ranker
 from backend.app.mlops.metrics import system_metrics
-from backend.app.resume.parser import extract_text_from_docx, extract_text_from_pdf, parse_resume_text
+from backend.app.resume.parser import (
+    extract_pdf_hyperlink_uris,
+    extract_text_from_docx,
+    extract_text_from_pdf,
+    parse_resume_text,
+)
 from backend.app.schemas import (
     AgentRequest,
     ApplyAgentRunRequest,
@@ -41,6 +48,26 @@ app = FastAPI(title="JobGraph AI", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 init_db()
 seed()
+
+_MATCH_CACHE: Dict[Tuple[str, int, int, int], List[Dict[str, Any]]] = {}
+
+
+def _cache_key(candidate_id: str, k: int, jobs_count: int, events_count: int) -> Tuple[str, int, int, int]:
+    return candidate_id, k, jobs_count, events_count
+
+
+def _clear_match_cache(candidate_id: str = "") -> None:
+    if not candidate_id:
+        _MATCH_CACHE.clear()
+        return
+    for key in list(_MATCH_CACHE):
+        if key[0] == candidate_id:
+            _MATCH_CACHE.pop(key, None)
+
+
+def _active_jobs_count(counts: Dict[str, Any]) -> int:
+    by_source = counts.get("jobs_by_source") or {}
+    return sum(int(by_source.get(source, 0) or 0) for source in ATS_SOURCES)
 
 
 @app.get("/")
@@ -71,6 +98,7 @@ def ingest_jobs(request: SearchRequest) -> Dict[str, Any]:
     try:
         jobs = JobIngestionClient(store.get_integration_settings()).search(request)
         store.upsert_jobs(jobs)
+        _clear_match_cache()
         run.jobs_found = len(jobs)
         run.jobs_saved = len(jobs)
         run.status = "success"
@@ -98,14 +126,41 @@ def recommendation_runs(candidate_id: str = "default", limit: int = 10) -> List[
 @app.get("/jobs/scraper-status")
 def scraper_status() -> Dict[str, Any]:
     from backend.app.core.config import get_settings
-    from backend.app.ingestion.companies_catalog import catalog_meta, load_merged_board_lists
 
     settings = get_settings()
     boards = load_merged_board_lists(settings)
+    runs = store.list_ingestion_runs(limit=1)
+    last_refresh = runs[0].finished_at.isoformat() if runs and runs[0].finished_at else None
     return {
         "sources": ["ashby", "greenhouse", "lever", "workday"],
         "companies_catalog": catalog_meta(settings),
         "configured_ats": boards,
+        "last_ingestion_finished_at": last_refresh,
+    }
+
+
+@app.get("/settings/ats-sources")
+def ats_sources_registry() -> Dict[str, Any]:
+    path = resolve_catalog_path()
+    entries = load_company_entries(path)
+    by_ats: Dict[str, List[Dict[str, Any]]] = {"ashby": [], "greenhouse": [], "lever": [], "workday": []}
+    for entry in entries:
+        bucket = by_ats.get(entry.ats)
+        if bucket is None:
+            continue
+        row: Dict[str, Any] = {"company": entry.company}
+        if entry.board:
+            row["board"] = entry.board
+        if entry.url:
+            row["url"] = entry.url
+        bucket.append(row)
+    runs = store.list_ingestion_runs(limit=1)
+    last = runs[0].finished_at.isoformat() if runs and runs[0].finished_at else None
+    return {
+        "catalog_path": str(path),
+        "last_refresh": last,
+        "counts": {k: len(v) for k, v in by_ats.items()},
+        "by_ats": by_ats,
     }
 
 
@@ -145,6 +200,7 @@ def get_job(job_id: str) -> Dict[str, Any]:
 async def upload_resume(candidate_id: str = "default", file: UploadFile = File(...)) -> Dict[str, Any]:
     profile = await _profile_from_upload(file, candidate_id)
     store.save_candidate(profile)
+    _clear_match_cache(candidate_id)
     return profile.model_dump()
 
 
@@ -159,12 +215,15 @@ async def recommend_from_resume(
 ) -> Dict[str, Any]:
     profile = await _profile_from_upload(file, candidate_id)
     store.save_candidate(profile)
+    _clear_match_cache(candidate_id)
     search_query, search_location = _search_plan(profile, query=query, location=location)
     ingestion = _ingest_for_profile(profile, query=search_query, location=search_location, k=k) if ingest else {"requested": False}
     jobs = scraper_jobs(store.list_jobs())
-    _scores, diagnostics = graphsage_affinity_scores(profile, jobs)
     events = store.list_applications(candidate_id)
     matches = rank_jobs(profile, jobs, k=k, application_events=events)
+    _MATCH_CACHE[_cache_key(candidate_id, k, len(jobs), len(events))] = [match.model_dump() for match in matches]
+    diagnostic_pool = [match.job for match in matches] or jobs[: min(len(jobs), 120)]
+    _scores, diagnostics = graphsage_affinity_scores(profile, diagnostic_pool)
     model_source = matches[0].model_source if matches else "hybrid_skill_semantic_graphsage_ranker_v3"
     parsed_resume = _parsed_resume_summary(profile, search_query, search_location)
     gnn_diagnostics = {
@@ -185,6 +244,7 @@ async def recommend_from_resume(
             diagnostics=gnn_diagnostics,
         )
     )
+    store.save_recommendations(candidate_id, matches, run_id=run.id)
     response = ResumeRecommendationResponse(
         candidate_id=candidate_id,
         candidate=profile,
@@ -198,20 +258,69 @@ async def recommend_from_resume(
 
 
 async def _profile_from_upload(file: UploadFile, candidate_id: str) -> CandidateProfile:
+    raw = await file.read()
     suffix = Path(file.filename or "resume.pdf").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+        suffix = ".pdf"
+    resume_dir = resolve_catalog_path().parent / "data" / "resumes"
+    resume_dir.mkdir(parents=True, exist_ok=True)
+    saved = resume_dir / f"{candidate_id}_resume{suffix}"
+    saved.write_bytes(raw)
+
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
+        tmp.write(raw)
         tmp_path = Path(tmp.name)
     try:
+        try:
+            if suffix == ".pdf":
+                text = extract_text_from_pdf(tmp_path)
+            elif suffix == ".docx":
+                text = extract_text_from_docx(tmp_path)
+            else:
+                text = tmp_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Resume parsing failed: {exc}") from exc
+        pdf_uri_hints = ""
         if suffix == ".pdf":
-            text = extract_text_from_pdf(tmp_path)
-        elif suffix == ".docx":
-            text = extract_text_from_docx(tmp_path)
-        else:
-            text = tmp_path.read_text(encoding="utf-8", errors="ignore")
-        return parse_resume_text(text, candidate_id=candidate_id)
+            pdf_uri_hints = "\n".join(extract_pdf_hyperlink_uris(saved))
+        blob = text if not pdf_uri_hints else f"{text}\n{pdf_uri_hints}"
+        profile = parse_resume_text(blob, candidate_id=candidate_id)
+        store.save_resume_record(candidate_id, str(saved.resolve()), text[:2000], profile.model_dump())
     finally:
         tmp_path.unlink(missing_ok=True)
+
+    autofill = store.get_autofill(candidate_id)
+    autofill.legal_name = autofill.legal_name or profile.name
+    autofill.email = autofill.email or profile.email
+    autofill.phone = autofill.phone or profile.phone
+    autofill.linkedin = autofill.linkedin or profile.links.get("linkedin", "")
+    autofill.github = autofill.github or profile.links.get("github", "")
+    autofill.portfolio = autofill.portfolio or profile.links.get("portfolio", "")
+    ca = dict(autofill.custom_answers or {})
+    if profile.summary and len(profile.summary.strip()) > 40:
+        ca.setdefault("resume summary", profile.summary.strip()[:12000])
+    autofill.custom_answers = ca
+    autofill.education = {**_education_autofill(profile), **(autofill.education or {})}
+    autofill.candidate_resume_path = str(saved.resolve())
+    store.save_autofill(autofill)
+    return profile
+
+
+def _education_autofill(profile: CandidateProfile) -> Dict[str, str]:
+    if not profile.education:
+        return {}
+    first = profile.education[0] or {}
+    return {
+        key: str(first.get(source) or "").strip()
+        for key, source in {
+            "school": "school",
+            "degree": "degree",
+            "major": "field",
+            "start": "start",
+            "end": "end",
+        }.items()
+        if str(first.get(source) or "").strip()
+    }
 
 
 def _ingest_for_profile(profile: CandidateProfile, query: str = "", location: str = "", k: int = 25) -> Dict[str, Any]:
@@ -250,6 +359,9 @@ def _parsed_resume_summary(profile: CandidateProfile, query: str, location: str)
         "name": profile.name,
         "email": profile.email,
         "skills": profile.skills[:18],
+        "projects": profile.projects[:5],
+        "experience": profile.experience[:3],
+        "education": profile.education[:2],
         "target_roles": profile.target_roles[:8],
         "location_preferences": profile.location_preferences[:8],
         "experience_years": profile.experience_years,
@@ -260,7 +372,9 @@ def _parsed_resume_summary(profile: CandidateProfile, query: str, location: str)
 
 @app.post("/candidate")
 def save_candidate(profile: CandidateProfile) -> Dict[str, Any]:
-    return store.save_candidate(profile).model_dump()
+    saved = store.save_candidate(profile)
+    _clear_match_cache(profile.candidate_id)
+    return saved.model_dump()
 
 
 @app.get("/candidate/{candidate_id}")
@@ -270,10 +384,16 @@ def get_candidate(candidate_id: str = "default") -> Dict[str, Any]:
 
 @app.get("/matches/{candidate_id}")
 def get_matches(candidate_id: str = "default", k: int = 25) -> Dict[str, Any]:
+    counts = store.metrics_counts()
+    events = store.list_applications(candidate_id)
+    key = _cache_key(candidate_id, k, _active_jobs_count(counts), len(events))
+    cached = _MATCH_CACHE.get(key)
+    if cached is not None:
+        return {"candidate_id": candidate_id, "matches": cached, "cached": True}
     candidate = store.get_candidate(candidate_id)
     jobs = scraper_jobs(store.list_jobs())
-    events = store.list_applications(candidate_id)
     matches = rank_jobs(candidate, jobs, k=k, application_events=events)
+    _MATCH_CACHE[key] = [match.model_dump() for match in matches]
     return {"candidate_id": candidate_id, "matches": [match.model_dump() for match in matches]}
 
 
@@ -332,6 +452,11 @@ def get_apply_agent_run(run_id: int) -> Dict[str, Any]:
     return store.get_apply_agent_run(run_id).model_dump()
 
 
+@app.get("/apply-agent/runs/{run_id}/steps")
+def get_apply_agent_steps(run_id: int) -> List[Dict[str, Any]]:
+    return [step.model_dump() for step in store.list_agent_steps(run_id)]
+
+
 @app.post("/apply-agent/runs/{run_id}/continue")
 def continue_apply_agent_run(run_id: int) -> Dict[str, Any]:
     return continue_apply_run(run_id).model_dump()
@@ -345,6 +470,7 @@ def cancel_apply_agent_run(run_id: int) -> Dict[str, Any]:
 @app.post("/applications")
 def track_application(event: ApplicationEvent) -> Dict[str, Any]:
     saved = store.save_application(event)
+    _clear_match_cache(saved.candidate_id)
     candidate = store.get_candidate(saved.candidate_id)
     jobs = scraper_jobs(store.list_jobs())
     events = store.list_applications(saved.candidate_id)

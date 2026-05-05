@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -10,6 +10,8 @@ class Job(BaseModel):
     source: str
     title: str
     company: str
+    """HTTPS image URL for job cards (ATS logo or inferred favicon). Not stored in DB; set on read."""
+    company_logo_url: str = ""
     location: str = ""
     work_model: str = "unknown"
     description: str = ""
@@ -30,6 +32,8 @@ class Job(BaseModel):
 
 def job_with_unified_api_fields(job: Job) -> Job:
     """Populate portal-style unified fields without a model validator (avoids nested validation warnings)."""
+    from backend.app.ingestion.logo_urls import resolve_company_logo_url
+
     data = job.model_dump()
     raw = data.get("raw") or {}
     jt = str(raw.get("employment_type") or raw.get("jobType") or raw.get("timeType") or data.get("job_type") or "full_time")
@@ -52,6 +56,12 @@ def job_with_unified_api_fields(job: Job) -> Job:
             "job_type": jt,
             "requirements": req,
             "salary": salary_val,
+            "company_logo_url": resolve_company_logo_url(
+                str(data.get("source") or ""),
+                str(data.get("company") or ""),
+                str(data.get("apply_url") or ""),
+                raw if isinstance(raw, dict) else {},
+            ),
         }
     )
     return Job.model_validate(data)
@@ -121,6 +131,8 @@ class MatchResult(BaseModel):
     matched_skills: List[str]
     missing_skills: List[str]
     explanation: str
+    graph_paths: List[str] = Field(default_factory=list)
+    score_breakdown: Dict[str, float] = Field(default_factory=dict)
     why_fit: List[str] = Field(default_factory=list)
     why_may_not_fit: List[str] = Field(default_factory=list)
     title_match_score: float = 0.0
@@ -132,6 +144,7 @@ class MatchResult(BaseModel):
     gnn_score: float = 0.0
     semantic_score: float = 0.0
     skill_overlap_score: float = 0.0
+    location_experience_fit_score: float = 0.0
 
 
 class ResumeRecommendationResponse(BaseModel):
@@ -203,6 +216,10 @@ class AutofillProfile(BaseModel):
     portfolio: str = ""
     work_authorization: str = ""
     sponsorship_required: str = ""
+    candidate_resume_path: str = Field(
+        default="",
+        description="Path to last uploaded resume on disk for Playwright set_input_files.",
+    )
     education: Dict[str, str] = Field(default_factory=dict)
     custom_answers: Dict[str, str] = Field(default_factory=dict)
 
@@ -241,3 +258,14 @@ class ApplyAgentRun(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
+
+
+class AgentStep(BaseModel):
+    id: Optional[int] = None
+    run_id: int
+    step_order: int = 0
+    label: str
+    status: str = "pending"
+    details: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

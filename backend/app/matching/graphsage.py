@@ -77,6 +77,8 @@ def _build_graph(candidate: CandidateProfile, jobs: List[Job]) -> Dict[str, List
     for location in candidate.location_preferences:
         connect(candidate_node, _typed_node("location", location), 0.45)
 
+    connect(candidate_node, _typed_node("experience_level", _candidate_experience_level(candidate.experience_years)), 0.5)
+
     for job in jobs:
         job_node = _job_node(job)
         graph.setdefault(job_node, [])
@@ -87,6 +89,7 @@ def _build_graph(candidate: CandidateProfile, jobs: List[Job]) -> Dict[str, List
             connect(job_node, _typed_node("location", job.location), 0.38)
         if job.work_model:
             connect(job_node, _typed_node("work_model", job.work_model), 0.35)
+        connect(job_node, _typed_node("experience_level", _job_experience_level(job)), 0.5)
         for skill in job.required_skills:
             connect(job_node, _typed_node("skill", skill), 1.0)
         for role in candidate.target_roles:
@@ -114,6 +117,27 @@ def _job_node(job: Job) -> str:
 
 def _typed_node(node_type: str, value: str) -> str:
     return f"{node_type}:{value.lower().strip()}"
+
+
+def _candidate_experience_level(years: float) -> str:
+    if years < 1:
+        return "entry"
+    if years < 4:
+        return "early"
+    if years < 8:
+        return "mid"
+    return "senior"
+
+
+def _job_experience_level(job: Job) -> str:
+    blob = f"{job.title} {job.description}".lower()
+    if any(term in blob for term in ("intern", "new grad", "entry level", "junior")):
+        return "entry"
+    if any(term in blob for term in ("senior", "staff", "principal", "lead")):
+        return "senior"
+    if any(term in blob for term in ("manager", "director", "head of")):
+        return "senior"
+    return "mid"
 
 
 def _initial_embedding(node: str, dim: int) -> np.ndarray:

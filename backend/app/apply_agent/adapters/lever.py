@@ -1,3 +1,8 @@
-from backend.app.apply_agent.adapters.generic import AtsAdapter
+"""Lever-hosted apply flows."""
 
-ADAPTER = AtsAdapter(name="lever")
+EXTRA_APPLY_SELECTORS = (
+    "a:has-text('Apply for this job')",
+    "button:has-text('Apply for this job')",
+    "a:has-text('Apply for Job')",
+    "button:has-text('Apply for Job')",
+)

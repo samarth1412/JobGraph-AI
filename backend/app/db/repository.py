@@ -8,17 +8,27 @@ from sqlalchemy import delete, func, not_, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
+    AgentStepRecord,
     ApplicationRecord,
     ApplyAgentRunRecord,
     ApplySessionRecord,
     AutofillRecord,
+    CandidateProfileRecord,
     CandidateRecord,
+    CandidateSkillRecord,
+    CompanyRecord,
     IngestionRunRecord,
     IntegrationSettingsRecord,
+    JobSkillRecord,
     JobRecord,
+    RecommendationRecord,
     RecommendationRunRecord,
+    ResumeRecord,
+    SkillRecord,
+    UserRecord,
 )
 from backend.app.schemas import (
+    AgentStep,
     ApplicationEvent,
     ApplicationJobSummary,
     ApplyAgentRun,
@@ -29,6 +39,7 @@ from backend.app.schemas import (
     IntegrationSettings,
     IntegrationStatus,
     Job,
+    MatchResult,
     RecommendationRun,
     job_with_unified_api_fields,
 )
@@ -147,6 +158,7 @@ def autofill_from_candidate(profile: CandidateProfile) -> AutofillProfile:
 
 
 def record_to_autofill(record: AutofillRecord) -> AutofillProfile:
+    resume_path = getattr(record, "candidate_resume_path", None) or ""
     return AutofillProfile(
         candidate_id=record.candidate_id,
         legal_name=record.legal_name,
@@ -157,12 +169,16 @@ def record_to_autofill(record: AutofillRecord) -> AutofillProfile:
         portfolio=record.portfolio,
         work_authorization=record.work_authorization,
         sponsorship_required=record.sponsorship_required,
+        candidate_resume_path=resume_path,
         education=dict(record.education or {}),
         custom_answers=dict(record.custom_answers or {}),
     )
 
 
 def save_jobs(session: Session, jobs: List[Job]) -> List[Job]:
+    # Avoid duplicate INSERTs for the same PK within one flush (bulk ingest).
+    session.info.pop("_jg_companies_added", None)
+    session.info.pop("_jg_skills_added", None)
     for job in jobs:
         job = job_with_unified_api_fields(job)
         existing = session.get(JobRecord, job.job_id)
@@ -172,6 +188,7 @@ def save_jobs(session: Session, jobs: List[Job]) -> List[Job]:
                 setattr(existing, key, value)
         else:
             session.add(job_to_record(job))
+        _sync_job_graph_tables(session, job)
     return jobs
 
 
@@ -210,6 +227,8 @@ def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProf
     else:
         session.add(candidate_to_record(profile))
 
+    _sync_candidate_profile_tables(session, profile)
+
     autofill = session.get(AutofillRecord, profile.candidate_id)
     candidate_autofill = autofill_from_candidate(profile)
     if not autofill:
@@ -228,6 +247,80 @@ def save_candidate(session: Session, profile: CandidateProfile) -> CandidateProf
         ):
             setattr(autofill, key, getattr(candidate_autofill, key))
     return profile
+
+
+def save_resume_record(session: Session, candidate_id: str, file_path: str, parsed_text_preview: str, parsed_profile: dict) -> None:
+    session.add(
+        ResumeRecord(
+            candidate_id=candidate_id,
+            file_path=file_path,
+            parsed_text_preview=parsed_text_preview[:2000],
+            parsed_profile=parsed_profile,
+        )
+    )
+
+
+def latest_resume_path(session: Session, candidate_id: str) -> str:
+    row = session.scalars(
+        select(ResumeRecord)
+        .where(ResumeRecord.candidate_id == candidate_id)
+        .order_by(ResumeRecord.created_at.desc())
+        .limit(1)
+    ).first()
+    return str(getattr(row, "file_path", "") or "") if row else ""
+
+
+def _sync_job_graph_tables(session: Session, job: Job) -> None:
+    if job.company:
+        company_id = _stable_id(job.company)
+        company = session.get(CompanyRecord, company_id)
+        if company:
+            company.name = job.company
+            company.source = job.source
+        else:
+            pending_ids = session.info.setdefault("_jg_companies_added", set())
+            if company_id not in pending_ids:
+                session.add(CompanyRecord(company_id=company_id, name=job.company, source=job.source))
+                pending_ids.add(company_id)
+    session.execute(delete(JobSkillRecord).where(JobSkillRecord.job_id == job.job_id))
+    for skill in job.required_skills:
+        skill_id = _stable_id(skill)
+        _ensure_skill(session, skill, skill_id)
+        session.add(JobSkillRecord(job_id=job.job_id, skill_id=skill_id))
+
+
+def _sync_candidate_profile_tables(session: Session, profile: CandidateProfile) -> None:
+    user = session.get(UserRecord, profile.candidate_id)
+    if user:
+        user.email = profile.email
+        user.name = profile.name
+    else:
+        session.add(UserRecord(user_id=profile.candidate_id, email=profile.email, name=profile.name))
+    existing = session.get(CandidateProfileRecord, profile.candidate_id)
+    payload = profile.model_dump()
+    if existing:
+        existing.profile = payload
+    else:
+        session.add(CandidateProfileRecord(candidate_id=profile.candidate_id, profile=payload))
+    session.execute(delete(CandidateSkillRecord).where(CandidateSkillRecord.candidate_id == profile.candidate_id))
+    for skill in profile.skills:
+        skill_id = _stable_id(skill)
+        _ensure_skill(session, skill, skill_id)
+        session.add(CandidateSkillRecord(candidate_id=profile.candidate_id, skill_id=skill_id))
+
+
+def _ensure_skill(session: Session, skill: str, skill_id: str) -> None:
+    if session.get(SkillRecord, skill_id):
+        return
+    pending = session.info.setdefault("_jg_skills_added", set())
+    if skill_id in pending:
+        return
+    session.add(SkillRecord(skill_id=skill_id, name=skill))
+    pending.add(skill_id)
+
+
+def _stable_id(value: str) -> str:
+    return value.lower().strip().replace("/", " ").replace("\\", " ").replace(" ", "_")[:256]
 
 
 def _links_with_structured_profile(profile: CandidateProfile) -> dict:
@@ -444,6 +537,37 @@ def record_to_apply_agent_run(record: ApplyAgentRunRecord) -> ApplyAgentRun:
     )
 
 
+def save_agent_step(session: Session, step: AgentStep) -> AgentStep:
+    payload = step.model_dump(exclude={"id", "metadata"})
+    payload["step_metadata"] = step.metadata
+    record = AgentStepRecord(**payload)
+    session.add(record)
+    session.flush()
+    return record_to_agent_step(record)
+
+
+def record_to_agent_step(record: AgentStepRecord) -> AgentStep:
+    return AgentStep(
+        id=record.id,
+        run_id=record.run_id,
+        step_order=record.step_order,
+        label=record.label,
+        status=record.status,
+        details=record.details,
+        metadata=dict(record.step_metadata or {}),
+        created_at=record.created_at,
+    )
+
+
+def list_agent_steps(session: Session, run_id: int) -> List[AgentStep]:
+    rows = session.scalars(
+        select(AgentStepRecord)
+        .where(AgentStepRecord.run_id == run_id)
+        .order_by(AgentStepRecord.step_order.asc(), AgentStepRecord.created_at.asc(), AgentStepRecord.id.asc())
+    ).all()
+    return [record_to_agent_step(row) for row in rows]
+
+
 def counts(session: Session) -> dict:
     source_rows = session.execute(select(JobRecord.source, func.count(JobRecord.job_id)).group_by(JobRecord.source)).all()
     return {
@@ -452,6 +576,7 @@ def counts(session: Session) -> dict:
         "applications_total": session.scalar(select(func.count(ApplicationRecord.id))) or 0,
         "apply_sessions_total": session.scalar(select(func.count(ApplySessionRecord.id))) or 0,
         "apply_agent_runs_total": session.scalar(select(func.count(ApplyAgentRunRecord.id))) or 0,
+        "agent_steps_total": session.scalar(select(func.count(AgentStepRecord.id))) or 0,
         "ingestion_runs_total": session.scalar(select(func.count(IngestionRunRecord.id))) or 0,
         "recommendation_runs_total": session.scalar(select(func.count(RecommendationRunRecord.id))) or 0,
         "jobs_by_source": {source: count for source, count in source_rows},
@@ -563,6 +688,26 @@ def save_recommendation_run(session: Session, run: RecommendationRun) -> Recomme
     session.add(record)
     session.flush()
     return record_to_recommendation_run(record)
+
+
+def save_recommendations(session: Session, candidate_id: str, matches: List[MatchResult], run_id: int | None = None) -> None:
+    for match in matches:
+        session.add(
+            RecommendationRecord(
+                candidate_id=candidate_id,
+                job_id=match.job.job_id,
+                score=match.score,
+                score_breakdown=dict(match.score_breakdown or {}),
+                explanation={
+                    "run_id": run_id,
+                    "matched_skills": match.matched_skills,
+                    "missing_skills": match.missing_skills,
+                    "graph_paths": match.graph_paths,
+                    "why_fit": match.why_fit,
+                    "why_may_not_fit": match.why_may_not_fit,
+                },
+            )
+        )
 
 
 def list_recommendation_runs(session: Session, candidate_id: str, limit: int = 10) -> List[RecommendationRun]:

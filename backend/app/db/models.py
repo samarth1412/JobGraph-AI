@@ -46,6 +46,76 @@ class CandidateRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    email: Mapped[str] = mapped_column(String(256), default="", index=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ResumeRecord(Base):
+    __tablename__ = "resumes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), index=True)
+    file_path: Mapped[str] = mapped_column(Text, default="")
+    parsed_text_preview: Mapped[str] = mapped_column(Text, default="")
+    parsed_profile: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CandidateProfileRecord(Base):
+    __tablename__ = "candidate_profiles"
+
+    candidate_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    profile: Mapped[Dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CompanyRecord(Base):
+    __tablename__ = "companies"
+
+    company_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    source: Mapped[str] = mapped_column(String(64), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SkillRecord(Base):
+    __tablename__ = "skills"
+
+    skill_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+
+
+class JobSkillRecord(Base):
+    __tablename__ = "job_skills"
+
+    job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    skill_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+
+
+class CandidateSkillRecord(Base):
+    __tablename__ = "candidate_skills"
+
+    candidate_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    skill_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+
+
+class RecommendationRecord(Base):
+    __tablename__ = "recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(String(128), index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    score_breakdown: Mapped[Dict] = mapped_column(JSON, default=dict)
+    explanation: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ApplicationRecord(Base):
     __tablename__ = "applications"
 
@@ -71,6 +141,7 @@ class AutofillRecord(Base):
     portfolio: Mapped[str] = mapped_column(Text, default="")
     work_authorization: Mapped[str] = mapped_column(String(256), default="")
     sponsorship_required: Mapped[str] = mapped_column(String(64), default="")
+    candidate_resume_path: Mapped[str] = mapped_column(Text, default="")
     education: Mapped[Dict] = mapped_column(JSON, default=dict)
     custom_answers: Mapped[Dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -108,6 +179,19 @@ class ApplyAgentRunRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class AgentStepRecord(Base):
+    __tablename__ = "agent_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, index=True)
+    step_order: Mapped[int] = mapped_column(Integer, default=0)
+    label: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
+    details: Mapped[str] = mapped_column(Text, default="")
+    step_metadata: Mapped[Dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class IntegrationSettingsRecord(Base):

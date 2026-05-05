@@ -5,6 +5,7 @@ from typing import List, Optional
 from backend.app.db import repository
 from backend.app.db.session import session_scope
 from backend.app.schemas import (
+    AgentStep,
     ApplicationEvent,
     ApplicationJobSummary,
     ApplyAgentRun,
@@ -15,6 +16,7 @@ from backend.app.schemas import (
     IntegrationSettings,
     IntegrationStatus,
     Job,
+    MatchResult,
     RecommendationRun,
 )
 
@@ -47,6 +49,16 @@ def get_job(job_id: str) -> Job:
 def save_candidate(profile: CandidateProfile) -> CandidateProfile:
     with session_scope() as session:
         return repository.save_candidate(session, profile)
+
+
+def save_resume_record(candidate_id: str, file_path: str, parsed_text_preview: str, parsed_profile: dict) -> None:
+    with session_scope() as session:
+        repository.save_resume_record(session, candidate_id, file_path, parsed_text_preview, parsed_profile)
+
+
+def latest_resume_path(candidate_id: str) -> str:
+    with session_scope() as session:
+        return repository.latest_resume_path(session, candidate_id)
 
 
 def get_candidate(candidate_id: str = "default") -> CandidateProfile:
@@ -124,6 +136,16 @@ def list_apply_agent_runs(candidate_id: str, limit: int = 10) -> List[ApplyAgent
         return repository.list_apply_agent_runs(session, candidate_id, limit=limit)
 
 
+def save_agent_step(step: AgentStep) -> AgentStep:
+    with session_scope() as session:
+        return repository.save_agent_step(session, step)
+
+
+def list_agent_steps(run_id: int) -> List[AgentStep]:
+    with session_scope() as session:
+        return repository.list_agent_steps(session, run_id)
+
+
 def metrics_counts() -> dict:
     with session_scope() as session:
         return repository.counts(session)
@@ -157,6 +179,11 @@ def list_ingestion_runs(limit: int = 10) -> List[IngestionRun]:
 def save_recommendation_run(run: RecommendationRun) -> RecommendationRun:
     with session_scope() as session:
         return repository.save_recommendation_run(session, run)
+
+
+def save_recommendations(candidate_id: str, matches: List[MatchResult], run_id: int | None = None) -> None:
+    with session_scope() as session:
+        repository.save_recommendations(session, candidate_id, matches, run_id=run_id)
 
 
 def list_recommendation_runs(candidate_id: str, limit: int = 10) -> List[RecommendationRun]:

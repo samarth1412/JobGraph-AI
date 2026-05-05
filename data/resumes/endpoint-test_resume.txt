@@ -1,0 +1,10 @@
+
+    Manav Sharma
+    manav@example.com
+
+    Skills
+    Python, PyTorch, Graph Neural Networks, Recommendation Systems
+
+    Projects
+    Built a GNN based job recommendation engine.
+    

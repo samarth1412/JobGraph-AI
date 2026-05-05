@@ -1,3 +1,8 @@
-from backend.app.apply_agent.adapters.generic import AtsAdapter
+"""Greenhouse-hosted apply flows — extra entrypoint locators before generic Apply clicks."""
 
-ADAPTER = AtsAdapter(name="greenhouse")
+EXTRA_APPLY_SELECTORS = (
+    "a:has-text('Apply for this job')",
+    "button:has-text('Apply for this job')",
+    "a:has-text('Apply Now')",
+    "button:has-text('Apply Now')",
+)
