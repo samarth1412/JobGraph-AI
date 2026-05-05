@@ -1,25 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { CompanyLogo } from "../../components/CompanyLogo";
 import {
-  Bookmark,
   Bot,
-  BriefcaseBusiness,
   Building2,
   ChevronDown,
-  Home,
   MapPin,
-  MessageSquare,
   ExternalLink,
   Search,
-  Settings,
   SlidersHorizontal,
   Sparkles,
   Star,
   Upload,
-  User,
-  Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -201,63 +193,19 @@ export function JobBoardView(props: Props) {
   const m = selectedMatch;
 
   return (
-    <div className="flex min-h-screen bg-[#0c0c0d] text-zinc-100">
-      {/* Sidebar */}
-      <aside className="flex w-[52px] shrink-0 flex-col items-center border-r border-white/[0.06] bg-[#09090b] py-4">
-        <Link href="/" className="mb-6 grid h-9 w-9 place-items-center rounded-lg bg-white text-black" title="Home">
-          <Zap size={18} strokeWidth={2.5} />
-        </Link>
-        <nav className="flex flex-1 flex-col items-center gap-1">
-          <Link
-            href="/"
-            className="grid h-10 w-10 place-items-center rounded-lg text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
-            title="Home"
-          >
-            <Home size={20} />
-          </Link>
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-white/[0.08] text-white" title="Jobs">
-            <Search size={20} />
-          </span>
-          <Link
-            href="/jobs"
-            className="grid h-10 w-10 place-items-center rounded-lg text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
-            title="Browse"
-          >
-            <BriefcaseBusiness size={20} />
-          </Link>
-          <Link
-            href="/tracker"
-            className="grid h-10 w-10 place-items-center rounded-lg text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
-            title="Tracker"
-          >
-            <MessageSquare size={20} />
-          </Link>
-          <button
-            type="button"
-            onClick={onCompleteProfile}
-            className="grid h-10 w-10 place-items-center rounded-lg text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
-            title="Profile"
-          >
-            <User size={20} />
-          </button>
-          <Link
-            href="/settings/sources"
-            className="grid h-10 w-10 place-items-center rounded-lg text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
-            title="Settings"
-          >
-            <Settings size={20} />
-          </Link>
-        </nav>
-        <div className="mt-auto grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-600 text-xs font-bold text-white">
-          {(candidate?.name || "Y").slice(0, 1).toUpperCase()}
-        </div>
-      </aside>
-
+    <div className="flex min-h-screen flex-col bg-[#0c0c0d] text-zinc-100">
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top bar */}
         <header className="border-b border-white/[0.06] bg-[#0c0c0d] px-5 py-5 lg:px-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h1 className="text-xl font-semibold tracking-tight text-white lg:text-2xl">Job Board</h1>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-black">
+                <Sparkles size={20} strokeWidth={2.25} />
+              </div>
+              <div className="min-w-0">
+                <h1 className="truncate text-lg font-semibold tracking-tight text-white sm:text-xl">JobGraph AI</h1>
+                <p className="text-xs text-zinc-500">Graph-ranked matches from your resume</p>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="cursor-pointer rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/[0.08]">
                 {uploading ? "…" : "Upload resume"}
@@ -269,33 +217,27 @@ export function JobBoardView(props: Props) {
                 disabled={!candidate || loading || uploading}
                 className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-white/[0.08] disabled:opacity-40"
               >
-                Refresh
+                Refresh matches
               </button>
             </div>
           </div>
 
           <div className="mt-5 flex flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#141416] p-1.5 sm:flex-row sm:items-stretch">
-            <div className="relative flex shrink-0 items-center border-b border-white/[0.06] sm:border-b-0 sm:border-r sm:px-3">
-              <select className="h-11 cursor-pointer appearance-none bg-transparent pl-3 pr-8 text-sm text-zinc-300 outline-none" aria-label="Category">
-                <option>Jobs</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            </div>
-            <div className="flex min-w-0 flex-1 items-center gap-2 border-b border-white/[0.06] px-3 sm:border-b-0 sm:border-r">
+            <div className="flex min-w-0 flex-1 items-center gap-2 border-b border-white/[0.06] px-3 sm:border-b-0 sm:border-r sm:border-white/[0.06]">
               <Search className="h-4 w-4 shrink-0 text-zinc-500" />
               <input
                 className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                placeholder="Search by job title, company, location…"
+                placeholder="Filter by title, company, or keyword…"
                 value={boardSearch}
                 onChange={(e) => onBoardSearchChange(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSearchSubmit()}
               />
             </div>
-            <div className="flex items-center gap-2 px-3 sm:max-w-[200px] sm:border-r sm:border-white/[0.06]">
+            <div className="flex items-center gap-2 px-3 sm:max-w-[220px] sm:border-r sm:border-white/[0.06]">
               <MapPin className="h-4 w-4 shrink-0 text-zinc-500" />
               <input
                 className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                placeholder="Everywhere"
+                placeholder="Location"
                 value={headerLocation}
                 onChange={(e) => onHeaderLocationChange(e.target.value)}
               />

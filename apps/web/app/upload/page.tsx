@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowRight, FileText, Loader2, Upload } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8022";
@@ -146,14 +146,24 @@ export default function ResumeUploadPage() {
 
   return (
     <main className="min-h-screen bg-[#0f0f10] px-4 py-8 text-white sm:px-6 lg:px-8">
-      <section className="mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-6xl gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-        <div>
-          <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-white text-black">
-            <FileText size={23} />
+      <header className="mx-auto mb-10 flex w-full max-w-6xl flex-col gap-4 border-b border-white/10 pb-8 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-black shadow-lg shadow-black/40">
+            <Sparkles size={22} strokeWidth={2.25} />
           </div>
-          <h1 className="text-4xl font-light tracking-tight sm:text-5xl">Start with your resume.</h1>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#b58cf4]">Resume intake</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">JobGraph AI</h1>
+            <p className="text-sm text-zinc-500">Resume → graph-ranked roles → guided apply</p>
+          </div>
+        </div>
+      </header>
+
+      <section className="mx-auto grid min-h-[calc(100vh-12rem)] w-full max-w-6xl gap-10 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
+        <div>
+          <h2 className="text-4xl font-light tracking-tight sm:text-5xl">Start with your resume.</h2>
           <p className="mt-4 max-w-xl text-base leading-7 text-zinc-400">
-            Upload your resume, answer the application basics, then JobGraph fetches ATS jobs from Greenhouse, Lever, Workday, and Ashby and ranks them with the GNN recommender.
+            Upload your resume, answer a few application basics, then we pull live listings from Greenhouse, Lever, Workday, and Ashby and rank them with our hybrid graph + semantic matcher.
           </p>
         </div>
 

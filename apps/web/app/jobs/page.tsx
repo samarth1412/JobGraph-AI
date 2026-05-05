@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Building2, MapPin, SlidersHorizontal } from "lucide-react";
+import { Building2, MapPin, SlidersHorizontal, Sparkles } from "lucide-react";
 import { CompanyLogo } from "../../components/CompanyLogo";
 import { useRedirectToUploadOnReload } from "../lib/useRedirectToUploadOnReload";
 
@@ -73,18 +73,26 @@ export default function JobsPage() {
   return (
     <main className="min-h-screen bg-[#0f0f10] px-4 py-8 text-white">
       <div className="mx-auto max-w-4xl">
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-300">
-              ← Home
-            </Link>
-            <h1 className="mt-2 text-3xl font-light">Matching ATS jobs</h1>
-            <p className="mt-2 text-zinc-400">Ranked from your saved candidate profile. Ingest new jobs from the workspace.</p>
+        <header className="mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-black">
+              <Sparkles size={22} strokeWidth={2.25} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b58cf4]">JobGraph AI</p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Your ranked matches</h1>
+              <p className="mt-2 max-w-lg text-sm leading-relaxed text-zinc-400">
+                Pulled from your saved profile. For search, filters, and apply-agent runs, use the workspace.
+              </p>
+            </div>
           </div>
-          <Link href="/workspace" className="text-sm font-semibold text-[#b58cf4] hover:underline">
-            Open workspace →
+          <Link
+            href="/workspace"
+            className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-white px-5 text-sm font-semibold text-black transition hover:bg-zinc-200"
+          >
+            Open workspace
           </Link>
-        </div>
+        </header>
 
         <section className="mb-8 rounded-2xl border border-white/10 bg-[#171717] p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-400">
