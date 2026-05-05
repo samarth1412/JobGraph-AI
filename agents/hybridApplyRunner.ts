@@ -1,23 +1,21 @@
-import type { Page } from "playwright";
+import type { Browser, Page } from "playwright";
 import { createLogger } from "./logger.js";
 import type { ApplyAgentOptions, ReviewSummary } from "./types.js";
-import { compileHybridApplyGraph } from "./graph/applyLangGraph.js";
+import { runMultiStepHybridApply } from "./multiStepApplyRunner.js";
 
 const log = createLogger("HybridApplyRunner");
 
 /**
- * End-to-end hybrid pipeline orchestrated by LangGraph: navigation → resume → extract →
- * map/fill → selects → summary. Playwright-first with LLM only inside mapping/option tools.
+ * Multi-step Playwright + optional Stagehand recovery: navigate → loop (extract → fill → selects/comboboxes → safe continue)
+ * until a final submit control is visible. Never clicks final submit while reviewMode is on.
  */
-export async function runHybridApply(page: Page, opts: ApplyAgentOptions): Promise<ReviewSummary> {
-  const graph = compileHybridApplyGraph(page, opts);
-  const out = await graph.invoke({});
-  const summary = out.reviewSummary;
-  if (!summary) {
-    log.error("LangGraph apply finished without reviewSummary");
-    throw new Error("Hybrid apply graph did not produce a review summary");
-  }
-  return summary;
+export async function runHybridApply(
+  page: Page,
+  browser: Browser,
+  opts: ApplyAgentOptions
+): Promise<ReviewSummary> {
+  log.info("starting multi-step hybrid apply");
+  return runMultiStepHybridApply(page, browser, opts);
 }
 
 export { compileHybridApplyGraph } from "./graph/applyLangGraph.js";

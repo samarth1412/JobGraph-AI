@@ -122,6 +122,21 @@ export async function pickOptionForField(
   minConfidence: number
 ): Promise<OptionPick | null> {
   const labelBlob = blob(field);
+
+  if (/sponsor|visa/.test(labelBlob)) {
+    const hint = norm(
+      candidate.sponsorship_required ||
+        candidate.custom_answers?.sponsorship ||
+        candidate.custom_answers?.["visa sponsorship"] ||
+        ""
+    );
+    if (!hint) return null;
+  }
+  if (/authorized|eligible to work|legally authorized|right to work/.test(labelBlob)) {
+    const hint = norm(candidate.work_authorization || candidate.custom_answers?.["work authorization"] || "");
+    if (!hint) return null;
+  }
+
   const sensitive = SENSITIVE_RE.test(labelBlob);
 
   const opts =

@@ -173,20 +173,21 @@ def _execute_apply_run_sync(run_id: int) -> ApplyAgentRun:
 
     # New hybrid architecture: run the TypeScript Playwright-first agent via node.
     resume_path = (getattr(profile, "candidate_resume_path", None) or "").strip()
+    resume_on_disk = bool(resume_path) and Path(resume_path).is_file()
     payload = {
         "applyUrl": run.apply_url,
         "options": {
-            "resumePdfPath": resume_path,
+            "resumePdfPath": resume_path if resume_on_disk else "",
             "candidate": _hybrid_candidate_for_agent(profile, candidate),
             "job": job.model_dump(),
             "reviewMode": True,
             "autoFillMinConfidence": 0.75,
-            # User uploads resume in-browser; agent focuses on form fields + survey answers.
-            "skipResumeUpload": True,
+            # Upload resume via Playwright when a PDF path exists; otherwise CLI expects skipResumeUpload.
+            "skipResumeUpload": not resume_on_disk,
             "maxSmartLlmFields": 18,
         },
     }
-    ok, data, stderr = run_node_hybrid_apply(payload, timeout_s=240)
+    ok, data, stderr = run_node_hybrid_apply(payload, timeout_s=420)
     if not ok:
         details = str(data.get("error") or "Hybrid agent failed.")
         if stderr:

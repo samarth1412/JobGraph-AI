@@ -27,6 +27,16 @@ export interface JobContextJson {
   description?: string;
 }
 
+/** Job + caps context for mapping / classification */
+export interface MapFieldsContext {
+  jobTitle: string;
+  jobCompany: string;
+  /** Trimmed description excerpt */
+  jobDescription?: string;
+  /** Caps grounded LLM calls per apply run */
+  maxSmartLlmFields?: number;
+}
+
 export interface ApplyAgentOptions {
   resumePdfPath: string;
   candidate: CandidateProfileJson;
@@ -68,7 +78,7 @@ export interface FieldMapping {
   profileKey: string;
   value: string;
   confidence: number;
-  source: "rule" | "llm";
+  source: "rule" | "llm" | "classifier";
 }
 
 export interface NeedsReviewItem {

@@ -9,4 +9,8 @@ export { pickOptionForField } from "./tools/OptionSelectionTool.js";
 export { answerCustomQuestion } from "./tools/CustomQuestionAnswerTool.js";
 export { captureRecoverySnapshot, withRecovery } from "./tools/RecoveryTool.js";
 export { buildReviewSummary } from "./tools/ReviewBeforeSubmit.js";
+export { selectComboboxOption } from "./tools/ComboboxSelectionTool.js";
+export { emitFieldTelemetry } from "./telemetry.js";
+export { runMultiStepHybridApply } from "./multiStepApplyRunner.js";
+export { initStagehandForBrowser, stagehandAct } from "./stagehandBridge.js";
 export { runHybridApply, compileHybridApplyGraph } from "./hybridApplyRunner.js";

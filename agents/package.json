@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@browserbasehq/stagehand": "^3.3.0",
     "@langchain/core": "^1.1.44",
     "@langchain/langgraph": "^1.3.0",
     "playwright": "^1.49.1"

@@ -1,5 +1,5 @@
-import type { CandidateProfileJson, ExtractedField, FieldMapping, NeedsReviewItem } from "../types.js";
-import { callOpenAiJsonObject } from "../llm/openaiFallback.js";
+import type { CandidateProfileJson, ExtractedField, FieldMapping, MapFieldsContext, NeedsReviewItem } from "../types.js";
+import { classifyFieldAction } from "../llm/fieldActionClassifier.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("FieldMappingTool");
@@ -12,34 +12,86 @@ function blob(f: ExtractedField): string {
   return norm(`${f.labelsText} ${f.placeholder} ${f.ariaLabel} ${f.name} ${f.id} ${f.nearbyText}`);
 }
 
-/** Job posting context for LLM-assisted mapping */
-export interface MapFieldsContext {
-  jobTitle: string;
-  jobCompany: string;
-  /** Trimmed description excerpt — improves cover-letter-style answers */
-  jobDescription?: string;
-  /** Caps grounded OpenAI calls per apply run */
-  maxSmartLlmFields?: number;
-}
-
-function customAnswersMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMapping | null {
+/** Match saved onboarding answers when question text overlaps the stored key (non-classifier path). */
+function customAnswersLooseMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMapping | null {
   const ca = candidate.custom_answers;
   if (!ca || typeof ca !== "object") return null;
   const b = blob(f);
+  const idBlob = norm(`${f.name} ${f.id} ${f.placeholder}`);
   for (const [key, raw] of Object.entries(ca)) {
     const val = typeof raw === "string" ? raw.trim() : "";
     if (!val) continue;
     const kn = norm(key);
-    if (kn.length >= 4 && b.includes(kn)) {
+    if (kn.length < 3) continue;
+    if (kn.length >= 4 && (b.includes(kn) || idBlob.includes(kn.replace(/\s+/g, "")))) {
       return { field: f, profileKey: `custom_answers.${key}`, value: val, confidence: 0.88, source: "rule" };
     }
     const tokens = kn.split(/[^a-z0-9]+/).filter((t) => t.length > 3);
     if (tokens.length === 0) continue;
-    const hits = tokens.filter((t) => b.includes(t)).length;
+    const hits = tokens.filter((t) => b.includes(t) || idBlob.includes(t)).length;
     if (hits >= Math.min(2, tokens.length)) {
       return { field: f, profileKey: `custom_answers.${key}`, value: val, confidence: 0.82, source: "rule" };
     }
   }
+  return null;
+}
+
+function intakeStructuredMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMapping | null {
+  const ca = candidate.custom_answers;
+  if (!ca || typeof ca !== "object") return null;
+  const b = blob(f);
+
+  if (/\bgender\b/i.test(b) && !/pronoun/i.test(b)) {
+    const v = String(ca.gender || "").trim();
+    if (v) return { field: f, profileKey: "custom_answers.gender", value: v, confidence: 0.93, source: "rule" };
+  }
+  if (/\brace\b|\bethnicity\b/i.test(b)) {
+    const v = String(ca["race/ethnicity"] || ca.ethnicity || "").trim();
+    if (v)
+      return {
+        field: f,
+        profileKey: "custom_answers.race/ethnicity",
+        value: v,
+        confidence: 0.92,
+        source: "rule",
+      };
+  }
+  if (/\bveteran\b/i.test(b)) {
+    const v = String(ca["veteran status"] || ca.veteran || "").trim();
+    if (v)
+      return {
+        field: f,
+        profileKey: "custom_answers.veteran",
+        value: v,
+        confidence: 0.91,
+        source: "rule",
+      };
+  }
+  if (/\bdisability\b/i.test(b)) {
+    const v = String(ca.disability || ca["disability status"] || "").trim();
+    if (v)
+      return {
+        field: f,
+        profileKey: "custom_answers.disability",
+        value: v,
+        confidence: 0.91,
+        source: "rule",
+      };
+  }
+
+  const sp = String(candidate.sponsorship_required || ca.sponsorship || ca["visa sponsorship"] || "").trim();
+  if (sp && /\bsponsor|visa\b/i.test(b) && (f.tag === "input" || f.tag === "textarea"))
+    return { field: f, profileKey: "sponsorship_required", value: sp, confidence: 0.9, source: "rule" };
+
+  const wa = String(candidate.work_authorization || ca["work authorization"] || "").trim();
+  if (
+    wa &&
+    /\b(work authorization|eligible to work|authorized to work|legally authorized)\b/i.test(b) &&
+    (f.tag === "input" || f.tag === "textarea")
+  ) {
+    return { field: f, profileKey: "work_authorization", value: wa, confidence: 0.9, source: "rule" };
+  }
+
   return null;
 }
 
@@ -49,11 +101,23 @@ function ruleMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMap
   const email = (candidate.email || "").trim();
   const phone = (candidate.phone || "").trim();
 
-  if (email && /email|e-mail/.test(b) && f.tag === "input" && (f.type === "email" || f.type === "text" || !f.type))
-    return { field: f, profileKey: "email", value: email, confidence: 0.95, source: "rule" };
+  if (email && f.tag === "input") {
+    const nm = norm(`${f.name} ${f.id}`);
+    const looksLikeEmail =
+      /email|e-mail/.test(b) ||
+      /\bemail\b/.test(nm) ||
+      ["email", "e_mail", "candidate_email", "contact_email"].includes(nm.replace(/-/g, "_")) ||
+      (f.type || "").toLowerCase() === "email";
+    if (looksLikeEmail)
+      return { field: f, profileKey: "email", value: email, confidence: 0.95, source: "rule" };
+  }
 
-  if (phone && /phone|mobile|tel/.test(b) && f.tag === "input")
-    return { field: f, profileKey: "phone", value: phone, confidence: 0.93, source: "rule" };
+  if (phone && f.tag === "input") {
+    const nm = norm(`${f.name} ${f.id}`);
+    const looksLikePhone =
+      /phone|mobile|tel|cell/.test(b) || /\b(phone|mobile|tel)\b/.test(nm) || (f.type || "").toLowerCase() === "tel";
+    if (looksLikePhone) return { field: f, profileKey: "phone", value: phone, confidence: 0.93, source: "rule" };
+  }
 
   if (name) {
     if (/full name|legal name/.test(b) && (f.tag === "input" || f.tag === "textarea"))
@@ -75,26 +139,11 @@ function ruleMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMap
   }
 
   const li = (candidate.linkedin || "").trim();
-  if (li && /linkedin/.test(b))
-    return { field: f, profileKey: "linkedin", value: li, confidence: 0.92, source: "rule" };
+  if (li && /linkedin/.test(b)) return { field: f, profileKey: "linkedin", value: li, confidence: 0.92, source: "rule" };
 
   const gh = (candidate.github || "").trim();
   if (gh && /github|git\s*hub/.test(b))
     return { field: f, profileKey: "github", value: gh, confidence: 0.92, source: "rule" };
-
-  const spNeed = (candidate.sponsorship_required || "").trim();
-  if (spNeed && /\bsponsor|visa\s*sponsor/i.test(b) && (f.tag === "input" || f.tag === "textarea")) {
-    return { field: f, profileKey: "sponsorship_required", value: spNeed, confidence: 0.84, source: "rule" };
-  }
-
-  const wa = (candidate.work_authorization || "").trim();
-  if (
-    wa &&
-    /\b(work authorization|eligible to work|authorized to work|legally authorized)\b/i.test(b) &&
-    (f.tag === "input" || f.tag === "textarea")
-  ) {
-    return { field: f, profileKey: "work_authorization", value: wa, confidence: 0.82, source: "rule" };
-  }
 
   const pf = (candidate.portfolio || "").trim();
   if (pf && /portfolio|personal\s*website|website/.test(b))
@@ -142,67 +191,15 @@ function ruleMatch(candidate: CandidateProfileJson, f: ExtractedField): FieldMap
   return null;
 }
 
-/** Strong signal for longer narrative answers */
-function shouldTryLlmForEssayPrompt(f: ExtractedField): boolean {
-  if (f.tag !== "textarea" && !(f.tag === "input" && (f.type === "text" || !f.type))) return false;
-  const b = blob(f);
-  return /\b(why|describe|tell\s+us|explain|cover\s+letter|anything\s+else|additional\s+comments|motivation|what\s+interests|why\s+are\s+you|why\s+this\s+role|availability|notice\s+period)\b/.test(
-    b
-  );
-}
-
-/** Short text / textarea that looks like a real question (skip anonymous boxes to save latency/tokens) */
-function wantsGroundedLlmFill(f: ExtractedField): boolean {
+function shouldTryClassifier(f: ExtractedField): boolean {
   const t = (f.type || "").toLowerCase();
   const b = blob(f);
   if (f.tag === "textarea") {
-    if (b.length >= 28) return true;
+    if (b.length >= 12) return true;
     return /\b(cover|letter|summary|tell|why|describe|motivat|additional|comments|essay|bio|about\s+your)\b/i.test(b);
   }
-  if (f.tag === "input" && ["text", "search", ""].includes(t)) return b.length >= 12;
+  if (f.tag === "input" && ["text", "search", "", "email", "tel", "url", "number"].includes(t)) return b.length >= 6;
   return false;
-}
-
-async function llmMapGroundedQuestion(
-  candidate: CandidateProfileJson,
-  ctx: MapFieldsContext,
-  f: ExtractedField,
-  essayStyle: boolean
-): Promise<FieldMapping | null> {
-  const jd = (ctx.jobDescription || "").trim().slice(0, 4500);
-  const b = blob(f);
-  const hardCap = f.tag === "textarea" ? (essayStyle ? 3200 : 2000) : 420;
-  const tone = essayStyle
-    ? "Write 2–6 complete sentences when appropriate."
-    : "Prefer one concise phrase or a single short sentence unless the question clearly needs more.";
-
-  const prompt = `You fill ONE job application form field. Treat "Field context" as the employer's question.
-
-Job: ${ctx.jobTitle} at ${ctx.jobCompany}
-${jd ? `\nJob description excerpt:\n${jd}\n` : ""}
-
-Field context (labels, placeholders, aria, nearby text):
-${b}
-
-Candidate JSON — ONLY allowed source of facts (parsed resume + onboarding answers). Never invent employers, degrees, dates, or certifications not present.
-${JSON.stringify(candidate)}
-
-Instructions:
-- ${tone}
-- Stay under ~${hardCap} characters unless empty is correct.
-- Demographics / EEO: use custom_answers or explicit profile fields only; never guess.
-- If you cannot answer truthfully from JSON, return {"value":"","confidence":0.22}.
-
-Return JSON ONLY:
-{"value":"<answer>","confidence":0-1}`;
-
-  const obj = await callOpenAiJsonObject(prompt);
-  if (!obj) return null;
-  const value = String(obj.value || "").trim();
-  const confidence = Number(obj.confidence ?? 0);
-  if (!value) return null;
-  log.debug("LLM grounded question mapping", { confidence, essayStyle });
-  return { field: f, profileKey: "llm.grounded", value: value.slice(0, hardCap), confidence, source: "llm" };
 }
 
 function skipField(f: ExtractedField): boolean {
@@ -217,8 +214,8 @@ function skipField(f: ExtractedField): boolean {
 }
 
 /**
- * Deterministic mapping first; LLM only for ambiguous free-text prompts.
- * Select/radio/combobox handled by OptionSelectionTool + Playwright clicks separately.
+ * Deterministic mapping first; LLM classifier for remaining question-like controls.
+ * Select/radio/combobox handled separately.
  */
 export async function mapFieldsHybrid(
   candidate: CandidateProfileJson,
@@ -242,48 +239,82 @@ export async function mapFieldsHybrid(
       continue;
     }
 
-    const custom = customAnswersMatch(candidate, f);
-    if (custom) {
-      if (custom.confidence >= minConfidenceAutoFill) mappings.push(custom);
+    const intake = intakeStructuredMatch(candidate, f);
+    if (intake) {
+      if (intake.confidence >= minConfidenceAutoFill) mappings.push(intake);
+      else
+        needsReview.push({
+          field: f,
+          reason: "intake rule below threshold",
+          suggestedValue: intake.value,
+        });
+      continue;
+    }
+
+    const customLoose = customAnswersLooseMatch(candidate, f);
+    if (customLoose) {
+      if (customLoose.confidence >= minConfidenceAutoFill) mappings.push(customLoose);
       else
         needsReview.push({
           field: f,
           reason: "custom answer below threshold",
-          suggestedValue: custom.value,
+          suggestedValue: customLoose.value,
         });
       continue;
     }
 
-    const essay = shouldTryLlmForEssayPrompt(f);
-    const groundedOk = wantsGroundedLlmFill(f);
-
-    if (essay || groundedOk) {
-      if (!hasOpenAi) {
-        needsReview.push({
-          field: f,
-          reason: "Smart fill needs OPENAI_API_KEY — question-like field with no rule match",
-        });
-        continue;
-      }
-      if (llmRemaining <= 0) {
-        needsReview.push({ field: f, reason: "Smart LLM budget exhausted for this run" });
-        continue;
-      }
-      llmRemaining -= 1;
-      const llm = await llmMapGroundedQuestion(candidate, ctx, f, essay);
-      if (llm && llm.confidence >= minConfidenceAutoFill) mappings.push(llm);
-      else if (llm)
-        needsReview.push({
-          field: f,
-          reason: "LLM answer below threshold",
-          suggestedValue: llm.value,
-          llmConfidence: llm.confidence,
-        });
-      else needsReview.push({ field: f, reason: "no grounded LLM mapping" });
+    if (!shouldTryClassifier(f)) {
+      needsReview.push({ field: f, reason: "no deterministic mapping (skipped classifier)" });
       continue;
     }
 
-    needsReview.push({ field: f, reason: "no deterministic mapping (skipped AI)" });
+    if (!hasOpenAi) {
+      needsReview.push({
+        field: f,
+        reason: "Classifier requires OPENAI_API_KEY — question-like field with no rule match",
+      });
+      continue;
+    }
+    if (llmRemaining <= 0) {
+      needsReview.push({ field: f, reason: "Classifier budget exhausted for this run" });
+      continue;
+    }
+    llmRemaining -= 1;
+
+    const cls = await classifyFieldAction(candidate, ctx, f, f.options?.map((o) => o.text || o.value).filter(Boolean) || []);
+    if (!cls) {
+      needsReview.push({ field: f, reason: "classifier returned no result" });
+      continue;
+    }
+
+    if (cls.action === "skip" || !cls.value.trim()) {
+      needsReview.push({
+        field: f,
+        reason: cls.reason || "classifier skip",
+        suggestedValue: cls.value || undefined,
+        llmConfidence: cls.confidence,
+      });
+      continue;
+    }
+
+    if (cls.confidence < minConfidenceAutoFill) {
+      needsReview.push({
+        field: f,
+        reason: cls.reason || "classifier below threshold",
+        suggestedValue: cls.value,
+        llmConfidence: cls.confidence,
+      });
+      continue;
+    }
+
+    log.debug("classifier mapping", { action: cls.action, confidence: cls.confidence });
+    mappings.push({
+      field: f,
+      profileKey: `classifier.${cls.action}`,
+      value: cls.value,
+      confidence: cls.confidence,
+      source: "classifier",
+    });
   }
 
   return { mappings, needsReview };

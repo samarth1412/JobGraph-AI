@@ -1,6 +1,7 @@
 import type { Frame, Page } from "playwright";
 import { createLogger } from "../logger.js";
 import type { ExtractedField } from "../types.js";
+import { emitFieldTelemetry } from "../telemetry.js";
 
 const log = createLogger("FieldExtractionTool");
 
@@ -26,9 +27,31 @@ function stableHint(el: RawExtracted, frameUrl: string): string {
   return key.slice(0, 400);
 }
 
-async function extractFromFrame(frame: Frame): Promise<ExtractedField[]> {
+function dedupeKeyField(f: ExtractedField): string {
+  const label = (f.labelsText || "").replace(/\s+/g, " ").trim().slice(0, 160).toLowerCase();
+  return [f.frameUrl || "", f.tag, f.type, f.name, f.id, label].join("|").slice(0, 450);
+}
+
+async function extractFromFrame(frame: Frame, iteration?: number): Promise<ExtractedField[]> {
   const frameUrl = frame.url();
   const raw = await frame.evaluate(() => {
+    function isVisible(el: Element): boolean {
+      if (!(el instanceof HTMLElement)) return false;
+      if (typeof el.checkVisibility === "function") {
+        try {
+          return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+        } catch {
+          /* fall through */
+        }
+      }
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) return false;
+      const rect = el.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return false;
+      if (rect.width < 1 && rect.height < 1) return false;
+      return true;
+    }
+
     function nearby(el: Element, depth: number): string {
       let p: Element | null = el.parentElement;
       let d = 0;
@@ -69,12 +92,17 @@ async function extractFromFrame(frame: Frame): Promise<ExtractedField[]> {
     );
 
     for (const node of nodes) {
+      if (!isVisible(node)) continue;
+
       const tag = node.tagName.toLowerCase();
       let type = (node as HTMLInputElement).type || "";
       if (tag === "textarea") type = "textarea";
       if ((node as HTMLElement).getAttribute("role") === "combobox") type = "combobox";
 
       const el = node as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+      if (el.disabled) continue;
+      if ("readOnly" in el && (el as HTMLInputElement).readOnly) continue;
+
       const options =
         tag === "select"
           ? Array.from((node as HTMLSelectElement).options).map((o) => ({
@@ -106,20 +134,41 @@ async function extractFromFrame(frame: Frame): Promise<ExtractedField[]> {
     return out;
   });
 
-  return raw.map((r) => ({
+  const mapped = raw.map((r) => ({
     ...r,
     selectorHint: stableHint(r, frameUrl),
     frameUrl,
   }));
+
+  const seen = new Set<string>();
+  const deduped: ExtractedField[] = [];
+  for (const f of mapped) {
+    const key = dedupeKeyField(f);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(f);
+  }
+
+  for (const f of deduped) {
+    emitFieldTelemetry({
+      phase: "detected",
+      label: f.labelsText?.slice(0, 180),
+      selectorHint: f.selectorHint,
+      fieldKind: `${f.tag}:${f.type}`,
+      iteration,
+    });
+  }
+
+  return deduped;
 }
 
-/** Extract visible-ish fields across main page and frames */
-export async function extractAllFields(page: Page): Promise<ExtractedField[]> {
+/** Extract visible, enabled fields across main page and frames */
+export async function extractAllFields(page: Page, iteration?: number): Promise<ExtractedField[]> {
   const fields: ExtractedField[] = [];
   const frames = page.frames();
   for (const frame of frames) {
     try {
-      const chunk = await extractFromFrame(frame);
+      const chunk = await extractFromFrame(frame, iteration);
       fields.push(...chunk);
     } catch (err) {
       log.warn("skip frame extract", { frame: frame.url(), err: String(err) });

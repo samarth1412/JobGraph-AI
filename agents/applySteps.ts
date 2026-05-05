@@ -3,9 +3,17 @@ import type { CandidateProfileJson, ExtractedField, FieldMapping, NeedsReviewIte
 import { fieldLocator, resolveRoot } from "./tools/locatorUtils.js";
 import { captureRecoverySnapshot } from "./tools/RecoveryTool.js";
 import { pickOptionForField, snapChoiceToOptions } from "./tools/OptionSelectionTool.js";
+import { selectComboboxOption } from "./tools/ComboboxSelectionTool.js";
+import { stagehandAct, type StagehandHandle } from "./stagehandBridge.js";
+import { emitFieldTelemetry } from "./telemetry.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("ApplySteps");
+
+export interface ApplyExecutionOptions {
+  iteration?: number;
+  stagehand?: StagehandHandle | null;
+}
 
 function norm(s: string): string {
   return s.replace(/\s+/g, " ").trim().toLowerCase();
@@ -35,7 +43,7 @@ async function fillOneControl(loc: Locator, f: ExtractedField, value: string): P
     return;
   }
 
-  if (tag === "input" && (type === "radio")) {
+  if (tag === "input" && type === "radio") {
     await first.click({ timeout: 5000 });
     return;
   }
@@ -66,15 +74,63 @@ async function fillOneControl(loc: Locator, f: ExtractedField, value: string): P
   });
 }
 
-export async function applyMappings(page: Page, mappings: FieldMapping[]): Promise<void> {
+export async function applyMappings(page: Page, mappings: FieldMapping[], exec?: ApplyExecutionOptions): Promise<void> {
+  const iteration = exec?.iteration;
+  const sh = exec?.stagehand ?? null;
   for (const m of mappings) {
+    emitFieldTelemetry({
+      phase: "mapped",
+      label: m.field.labelsText?.slice(0, 180),
+      selectorHint: m.field.selectorHint,
+      profileKey: m.profileKey,
+      value: m.value.slice(0, 400),
+      confidence: m.confidence,
+      reason: m.source,
+      iteration,
+    });
     try {
       const root = resolveRoot(page, m.field.frameUrl);
       const loc = fieldLocator(root, m.field);
       await fillOneControl(loc, m.field, m.value);
+      emitFieldTelemetry({
+        phase: "filled",
+        label: m.field.labelsText?.slice(0, 180),
+        selectorHint: m.field.selectorHint,
+        profileKey: m.profileKey,
+        value: m.value.slice(0, 400),
+        confidence: m.confidence,
+        iteration,
+      });
     } catch (err) {
+      const labelShort = (m.field.labelsText || m.field.placeholder || "").trim().slice(0, 120);
+      const healed = await stagehandAct(
+        sh,
+        page,
+        `In the job application form, fill the field labeled "${labelShort}" with exactly this text: ${m.value.slice(0, 500)}`
+      );
+      if (healed) {
+        emitFieldTelemetry({
+          phase: "filled",
+          label: m.field.labelsText?.slice(0, 180),
+          selectorHint: m.field.selectorHint,
+          profileKey: m.profileKey,
+          value: m.value.slice(0, 400),
+          confidence: m.confidence,
+          reason: "stagehand_recovery",
+          iteration,
+        });
+        continue;
+      }
+      emitFieldTelemetry({
+        phase: "failure",
+        label: m.field.labelsText?.slice(0, 180),
+        selectorHint: m.field.selectorHint,
+        profileKey: m.profileKey,
+        failure: String(err),
+        iteration,
+      });
       log.warn("fill failed", { err: String(err), hint: m.field.selectorHint });
-      await captureRecoverySnapshot(page, `fill:${m.profileKey}`, err);
+      await captureRecoverySnapshot(page, `fill:${m.profileKey}:${m.field.selectorHint}`, err);
     }
   }
 }
@@ -121,12 +177,11 @@ export async function collectRadioNeedsReview(
   page: Page,
   candidate: CandidateProfileJson,
   fields: ExtractedField[],
-  threshold: number
+  threshold: number,
+  iteration?: number
 ): Promise<NeedsReviewItem[]> {
   const needsReview: NeedsReviewItem[] = [];
-  const radios = fields.filter(
-    (f) => f.tag === "input" && norm(f.type) === "radio" && !f.disabled
-  );
+  const radios = fields.filter((f) => f.tag === "input" && norm(f.type) === "radio" && !f.disabled);
   const groups = new Map<string, ExtractedField[]>();
   for (const r of radios) {
     const key = `${r.frameUrl || "__main__"}\x00${(r.name || "").trim() || r.selectorHint}`;
@@ -147,6 +202,15 @@ export async function collectRadioNeedsReview(
         });
         continue;
       }
+      emitFieldTelemetry({
+        phase: "radio",
+        label: pseudo.labelsText?.slice(0, 180),
+        selectorHint: pseudo.selectorHint,
+        value: pick.valueText,
+        confidence: pick.confidence,
+        reason: pick.source,
+        iteration,
+      });
       const chosen = pickRadioFromChoice(group, pick.valueText);
       if (!chosen) {
         needsReview.push({
@@ -164,6 +228,14 @@ export async function collectRadioNeedsReview(
         field: pseudoSelectFromRadioGroup(group),
         reason: `radio click failed: ${String(err)}`,
       });
+      emitFieldTelemetry({
+        phase: "failure",
+        label: pseudo.labelsText?.slice(0, 180),
+        selectorHint: pseudo.selectorHint,
+        fieldKind: "radio_group",
+        failure: String(err),
+        iteration,
+      });
       await captureRecoverySnapshot(page, "radio_group", err);
     }
   }
@@ -175,7 +247,8 @@ export async function collectSelectNeedsReview(
   page: Page,
   candidate: CandidateProfileJson,
   fields: ExtractedField[],
-  threshold: number
+  threshold: number,
+  iteration?: number
 ): Promise<NeedsReviewItem[]> {
   const needsReview: NeedsReviewItem[] = [];
   for (const f of fields) {
@@ -186,6 +259,15 @@ export async function collectSelectNeedsReview(
         needsReview.push({ field: f, reason: "could not confidently pick select option" });
         continue;
       }
+      emitFieldTelemetry({
+        phase: "select",
+        label: f.labelsText?.slice(0, 180),
+        selectorHint: f.selectorHint,
+        value: pick.valueText,
+        confidence: pick.confidence,
+        reason: pick.source,
+        iteration,
+      });
       const root = resolveRoot(page, f.frameUrl);
       const loc = fieldLocator(root, f).first();
       await loc.scrollIntoViewIfNeeded().catch(() => {});
@@ -203,7 +285,41 @@ export async function collectSelectNeedsReview(
       });
     } catch (err) {
       needsReview.push({ field: f, reason: `select failed: ${String(err)}` });
-      await captureRecoverySnapshot(page, "select_option", err);
+      emitFieldTelemetry({
+        phase: "failure",
+        label: f.labelsText?.slice(0, 180),
+        selectorHint: f.selectorHint,
+        fieldKind: "select",
+        failure: String(err),
+        iteration,
+      });
+      await captureRecoverySnapshot(page, `select:${f.selectorHint}`, err);
+    }
+  }
+  return needsReview;
+}
+
+/** Combobox-style controls extracted as role=combobox / type=combobox */
+export async function collectComboboxNeedsReview(
+  page: Page,
+  candidate: CandidateProfileJson,
+  fields: ExtractedField[],
+  threshold: number,
+  iteration?: number
+): Promise<NeedsReviewItem[]> {
+  const needsReview: NeedsReviewItem[] = [];
+  const combos = fields.filter(
+    (f) => !f.disabled && ((f.role || "").toLowerCase() === "combobox" || (f.type || "").toLowerCase() === "combobox")
+  );
+
+  for (const f of combos) {
+    const res = await selectComboboxOption(page, candidate, f, threshold, iteration);
+    if (!res.ok) {
+      needsReview.push({
+        field: f,
+        reason: res.reason || "combobox selection failed",
+      });
+      await captureRecoverySnapshot(page, `combobox:${f.selectorHint}`, new Error(res.reason || "combobox"));
     }
   }
   return needsReview;

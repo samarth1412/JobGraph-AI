@@ -10,6 +10,10 @@ export interface RecoveryOptions {
   outDir?: string;
 }
 
+function sanitizeSegment(label: string): string {
+  return label.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+}
+
 /** Capture diagnostics after a failed step for debugging / retry planning */
 export async function captureRecoverySnapshot(
   page: Page,
@@ -18,21 +22,54 @@ export async function captureRecoverySnapshot(
   opts: RecoveryOptions = {}
 ): Promise<RecoverySnapshot> {
   const errMsg = error instanceof Error ? error.message : String(error);
-  const base =
+  const baseRoot =
     opts.outDir ??
     path.join(process.cwd(), "agents", ".recovery", new Date().toISOString().replace(/[:.]/g, "-"));
-  await mkdir(base, { recursive: true });
+  await mkdir(baseRoot, { recursive: true });
 
   const ts = new Date().toISOString();
+  const segment = `${sanitizeSegment(failedAction)}_${Date.now()}`;
+  const base = path.join(baseRoot, segment);
+  await mkdir(base, { recursive: true });
+
   const screenshotPath = path.join(base, "viewport.png");
-  const htmlPath = path.join(base, "page.html");
-  const a11yPath = path.join(base, "accessibility.txt");
+  const htmlPath = path.join(base, "dom.html");
+  const a11yPath = path.join(base, "dom_outline.txt");
+  const urlPath = path.join(base, "url.txt");
 
   try {
     await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => {});
     const html = await page.content().catch(() => "");
     await writeFile(htmlPath, html, "utf8").catch(() => {});
-    await writeFile(a11yPath, "(accessibility snapshot omitted — optional enrichment)", "utf8").catch(() => {});
+
+    const outline = await page
+      .evaluate(() => {
+        const lines: string[] = [];
+        if (!document.body) return "";
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+        let node: Node | null = walker.currentNode;
+        let count = 0;
+        while (node && count++ < 1200) {
+          const el = node as HTMLElement;
+          const tag = el.tagName?.toLowerCase() || "";
+          const role = el.getAttribute("role") || "";
+          const nm = el.getAttribute("aria-label") || el.getAttribute("name") || "";
+          const id = el.id ? `#${el.id}` : "";
+          const typ = el.getAttribute("type") || "";
+          if (
+            ["input", "textarea", "select", "button", "a", "label"].includes(tag) ||
+            role ||
+            (tag === "div" && el.className && /select|dropdown|combobox|menu/i.test(el.className))
+          ) {
+            lines.push(`${tag}${id} type=${typ} role=${role} name=${nm.slice(0, 120)}`);
+          }
+          node = walker.nextNode();
+        }
+        return lines.join("\n");
+      })
+      .catch(() => "");
+    await writeFile(a11yPath, outline, "utf8").catch(() => {});
+    await writeFile(urlPath, page.url(), "utf8").catch(() => {});
   } catch (capErr) {
     log.warn("partial recovery capture failed", { capErr: String(capErr) });
   }

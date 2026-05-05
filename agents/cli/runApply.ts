@@ -31,7 +31,7 @@ async function main() {
 
   try {
     await page.goto(payload.applyUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    const summary = await runHybridApply(page, payload.options);
+    const summary = await runHybridApply(page, browser, payload.options);
     process.stdout.write(JSON.stringify({ ok: true, summary }, null, 2));
   } finally {
     // Keep browser open only for review mode; otherwise close.
