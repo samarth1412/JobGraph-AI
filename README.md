@@ -20,49 +20,11 @@
 
 ## Architecture (high level)
 
-```mermaid
-flowchart TB
-  subgraph ingest [Ingestion and storage]
-    ATS[ATS connectors]
-    DB[(SQLite / Postgres)]
-    ATS --> DB
-  end
+**AI Job Application Agent** — system flow from resume intake through ranked jobs to Playwright-based application automation.
 
-  subgraph profile [Candidate understanding]
-    R[Resume upload]
-    P[Parser + skill extraction]
-    R --> P
-    P --> C[Candidate profile]
-  end
+![Architecture diagram: User → React frontend → FastAPI → AI layer (resume parser, embeddings, GNN recommender) → Ranked Jobs UI → LangGraph orchestration → automation (LLM + Playwright) → multi-step loop → filled application](./docs/images/architecture.png)
 
-  subgraph rank [Hybrid ranking]
-    G[Skill / role graph features]
-    N[Graph neural affinity]
-    S[Semantic resume ↔ job]
-    H[Fusion + explainability]
-    DB --> G
-    C --> G
-    G --> N
-    C --> S
-    DB --> S
-    N --> H
-    S --> H
-  end
-
-  subgraph ui [Web app]
-    FE[Next.js workspace]
-    H --> FE
-  end
-
-  subgraph agent [Apply agent]
-    PW[Playwright multi-step loop]
-    LLM[Field classifier optional]
-    SH[Stagehand CDP fallback]
-    FE --> PW
-    PW --> LLM
-    PW --> SH
-  end
-```
+_Legend (diagram): green — AI / agent; blue — loop / state; gray — service._
 
 ---
 
