@@ -1,28 +1,108 @@
-﻿# JobGraph AI
+﻿# 🚀 JobGraph AI — Autonomous Job Application Agent
 
-**JobGraph AI** is a full-stack job intelligence platform: it ingests real ATS listings, parses resumes into structured profiles, **ranks roles with a hybrid graph + neural scoring stack**, and ships a **human-in-the-loop apply agent** that automates form filling in the browser while never submitting on your behalf.
+> Find the right jobs — and let an AI agent apply to them for you.
 
-> Built to present as a serious **ML + agentic systems** product—suitable for recruiter-facing walkthroughs and technical deep-dives alike.
+JobGraph AI combines **graph-based job recommendation (GNN + semantic matching)** with an **autonomous multi-step application agent** that navigates real ATS workflows (Greenhouse, Lever, Workday).
+
+⚡ From resume → ranked jobs → fully filled applications in seconds.
 
 ---
 
-## What ships
+## 💡 Why JobGraph AI Stands Out
 
-| Layer | What we ship |
-|--------|----------------|
-| **Data** | Live feeds from public ATS catalogues (Greenhouse, Lever, Workday, Ashby) with normalized job + company records. |
-| **Graph + GNN signal** | We materialize a **bipartite candidate–job–skill graph** and score affinity with a **GraphSAGE-style** encoder (implemented as `graphsage_affinity_scores` in the backend)—combined with classical overlap features so rankings stay interpretable, not a black box. |
-| **Hybrid ranker** | **Semantic similarity** (resume ↔ JD), **skill overlap**, **location / experience fit**, and graph-derived signals are fused into a single explainable score with per-factor breakdowns in the UI. |
-| **Apply agent** | A **multi-step Playwright** pipeline that discovers visible controls, applies deterministic + LLM-classified answers from your profile, handles selects/comboboxes, and optionally invokes **Stagehand** over CDP for brittle UI recoveries—**review mode** fills forms but **never clicks final Submit**. |
-| **UX** | Next.js workspace: resume intake → ranked board → job detail → **Apply with Agent** with live step telemetry. |
+- 🧠 **Graph + Semantic Intelligence**  
+  Not keyword search — jobs are ranked using a hybrid of **embeddings + graph-based affinity scoring**.
+
+- 🤖 **Autonomous Application Agent**  
+  Goes beyond autofill — navigates **multi-step, real-world** job applications.
+
+- 🔁 **Handles Messy ATS Flows**  
+  Works with dynamic forms, dropdowns, comboboxes, and multi-page applications.
+
+- 🛡️ **Human-in-the-loop Safe Mode**  
+  Fills everything — **never submits** without your review.
+
+---
+
+## 🧩 Problem
+
+Applying to jobs is repetitive, time-consuming, and inefficient:
+
+- Same data entered across dozens of portals  
+- Weak matching when search is plain keywords  
+- Almost no automation that survives **real** ATS flows (not toy forms)
+
+---
+
+## ✅ Solution
+
+JobGraph AI:
+
+- **Recommends** relevant roles using hybrid graph + semantic signals  
+- **Automates** application workflows end-to-end (with review mode)  
+- **Keeps you in control** — you review before anything is submitted  
+
+---
+
+## 🧠 Ranking Engine (Core ML System)
+
+JobGraph AI uses a **hybrid ranking pipeline**:
+
+- **Semantic Matching**  
+  Resume ↔ job description similarity using embedding-style signals and text overlap.
+
+- **Graph-based Affinity (GNN-inspired)**  
+  A **candidate–job–skill** graph scored via a **GraphSAGE-style** encoder (`graphsage_affinity_scores` in the backend), fused with classical graph features.
+
+- **Structured Signals**  
+  Skill overlap, role/experience fit, location alignment, and explainable factor breakdowns in the UI.
+
+👉 **Final score** = interpretable fusion of these signals — **not a black box**.
+
+---
+
+## 🤖 Autonomous Application Agent
+
+The apply agent is **not** a simple autofill script — it behaves like a **decision-making system**:
+
+1. Detects **visible, enabled** fields dynamically across frames  
+2. Classifies behavior (**text / select / radio / combobox / multi-step navigation**)  
+3. Maps answers from your **candidate profile + intake answers**, with **LLM classification** when rules aren’t enough  
+4. Drives the browser with **Playwright** (first-class)  
+5. Clicks safe **Next / Continue / Save and continue** across pages  
+6. Repeats until the flow is complete — **stops before final Submit** in review mode  
+
+✔ Works against **live** ATS surfaces (Greenhouse, Lever, Workday, Ashby-family patterns)  
+✔ Dropdowns, checkboxes, custom selects, combobox-style controls  
+✔ Optional **Stagehand** CDP attach for harder UI recovery paths  
+
+---
+
+## 📈 Impact
+
+- ⚡ Cuts **manual application effort** from long form sessions to **guided, automated fills** (you still review)  
+- 🎯 **Stronger relevance** vs keyword-only search via hybrid ranking  
+- 🤖 **Multi-step applications** automated across major ATS-style flows  
+- 🧠 Built as a **scalable agentic pipeline** (deterministic rules + LLM + browser automation), not a brittle single-page script  
+
+---
+
+
+```bash
+pip install pillow   # if needed
+python scripts/record_demo_gif.py --install-browser   # once: downloads Chromium
+python scripts/record_demo_gif.py
+```
+
+_Or swap in your own screen capture — keep the path above so the README preview works on GitHub._
 
 ---
 
 ## Architecture (high level)
 
-**AI Job Application Agent** — system flow from resume intake through ranked jobs to Playwright-based application automation.
+**AI Job Application Agent** — system flow from resume intake through ranked jobs to browser automation.
 
-![Architecture diagram: User → React frontend → FastAPI → AI layer (resume parser, embeddings, GNN recommender) → Ranked Jobs UI → LangGraph orchestration → automation (LLM + Playwright) → multi-step loop → filled application](./docs/images/architecture.png)
+![Architecture diagram](./diagram_.png)
 
 _Legend (diagram): green — AI / agent; blue — loop / state; gray — service._
 
@@ -79,7 +159,7 @@ npm run build
 
 ## Environment variables
 
-**Do not commit `.env` or any file containing secrets.** They are listed in `.gitignore`. Keep `OPENAI_API_KEY` only on your machine or in your deployment secret store—it is optional for running the app (ranking and forms still work with deterministic rules; LLM-assisted classification and parsing extras are skipped when unset).
+**Do not commit `.env` or any file containing secrets.** They are listed in `.gitignore`. Keep `OPENAI_API_KEY` only on your machine or in your deployment secret store—it is optional for running the app (ranking and deterministic fills still work; LLM-assisted classification and parsing extras are skipped when unset).
 
 Copy `.env.example` to `.env` at the repo root when present. Common keys:
 
@@ -106,4 +186,6 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/jobgraph
 
 ---
 
+## License
 
+See repository license file if present; otherwise treat as private / all rights reserved unless stated.
